@@ -1,0 +1,11 @@
+{
+  "version": 2,
+  "buildCommand": "pnpm run build",
+  "installCommand": "pnpm install --prod=false",
+  "outputDirectory": "public",
+  "rewrites": [{ "source": "/graphql", "destination": "/api/graphql" }],
+  "functions": {
+    "api/graphql.ts": { "maxDuration": 10 },
+    "api/webhooks/pluggy.ts": { "maxDuration": 10 }
+  }
+}

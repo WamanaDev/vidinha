@@ -1,21 +1,174 @@
 # Vidinha — SDL GraphQL (fonte única)
 #
-# Este arquivo é a fonte da verdade do contrato GraphQL entre apps/api e apps/mobile.
-# O conteúdo completo (types, inputs, enums, queries, mutations por domínio) está
-# especificado em specs/backend/ (contrato por módulo) e no histórico de
-# specs/02-API-AUTH.md (redirecionado). Preencher este arquivo é o primeiro passo
-# de implementação real do módulo correspondente — ver specs/backend/00-overview.md
-# para a ordem recomendada.
+# GERADO AUTOMATICAMENTE a partir do código code-first de apps/api
+# (@nestjs/graphql) via `pnpm --filter api run schema:generate`.
+# NÃO editar manualmente — qualquer alteração deve ser feita nos
+# resolvers/entities/dto de apps/api/src e regerada.
 #
-# Enquanto os módulos são implementados, mantenha este schema sempre compilável
-# (SDL válido) — adicione tipos conforme os módulos forem construídos, na ordem:
-# 1. auth/user  2. family  3. sharing-permissions  4. open-finance
-# 5. accounts/cards/transactions  6. recurring-expenses/categories  7. audit-log
+# Fonte única do contrato GraphQL entre apps/api e apps/mobile — ver
+# specs/backend/00-overview.md §6 (versionamento do schema).
+
+type User implements Node {
+  id: ID!
+  email: String!
+  displayName: String
+  avatarUrl: String
+  mfaEnabled: Boolean!
+  createdAt: DateTime!
+}
+
+interface Node {
+  id: ID!
+}
+
+"""
+A date-time string at UTC, such as 2019-12-03T09:54:33Z, compliant with the date-time format.
+"""
+scalar DateTime
+
+type DataExportPayload {
+  downloadUrl: String!
+  expiresAt: DateTime!
+}
+
+type FamilyMembership implements Node {
+  id: ID!
+  family: Family!
+  user: User!
+  role: FamilyRole!
+  joinedAt: DateTime!
+}
+
+enum FamilyRole {
+  ADMIN
+  MEMBER
+}
+
+type Family implements Node {
+  id: ID!
+  name: String!
+  createdAt: DateTime!
+  members: [FamilyMembership!]!
+  myRole: FamilyRole!
+}
+
+type FamilyInvite implements Node {
+  id: ID!
+  family: Family!
+  email: String!
+  invitedBy: User!
+  status: InviteStatus!
+  expiresAt: DateTime!
+}
+
+enum InviteStatus {
+  PENDING
+  ACCEPTED
+  EXPIRED
+  REVOKED
+  DECLINED
+}
+
+type FamilyPayload {
+  family: Family!
+}
+
+type FamilyInvitePayload {
+  invite: FamilyInvite!
+}
+
+type Account {
+  id: ID!
+  type: AccountType!
+  name: String!
+  maskedNumber: String
+  currency: String!
+  balance: Float!
+}
+
+enum AccountType {
+  CHECKING
+  SAVINGS
+  INVESTMENT
+  OTHER
+}
+
+type OpenFinanceConnection {
+  id: ID!
+  institutionName: String!
+  institutionLogoUrl: String
+  status: ConnectionStatus!
+  lastSyncedAt: DateTime
+  createdAt: DateTime!
+  accounts: [Account!]!
+}
+
+enum ConnectionStatus {
+  CONNECTED
+  UPDATING
+  LOGIN_ERROR
+  OUTDATED
+  ERROR
+  REVOKED
+}
+
+type PluggyConnectToken {
+  connectToken: String!
+  expiresAt: DateTime!
+}
 
 type Query {
-  _placeholder: Boolean
+  me: User!
+  family(id: ID!): Family!
+  myFamilies: [FamilyMembership!]!
+  pluggyConnectToken: PluggyConnectToken!
+  openFinanceConnections(familyId: ID!): [OpenFinanceConnection!]!
 }
 
 type Mutation {
-  _placeholder: Boolean
+  completeUserProfile(input: CompleteProfileInput!): User!
+  requestAccountDeletion: Boolean!
+  exportMyData: DataExportPayload!
+  createFamily(input: CreateFamilyInput!): FamilyPayload!
+  inviteMember(input: InviteMemberInput!): FamilyInvitePayload!
+  acceptInvite(input: AcceptInviteInput!): FamilyPayload!
+  removeMember(input: RemoveMemberInput!): FamilyPayload!
+  promoteMember(input: PromoteMemberInput!): FamilyPayload!
+  leaveFamily(familyId: ID!): Boolean!
+  deleteFamily(familyId: ID!): Boolean!
+  createOpenFinanceConnection(input: CreateOpenFinanceConnectionInput!): OpenFinanceConnection!
+  syncOpenFinanceConnection(connectionId: ID!): OpenFinanceConnection!
+  revokeOpenFinanceConnection(connectionId: ID!): Boolean!
+}
+
+input CompleteProfileInput {
+  displayName: String!
+  avatarUrl: String
+}
+
+input CreateFamilyInput {
+  name: String!
+}
+
+input InviteMemberInput {
+  familyId: ID!
+  email: String!
+}
+
+input AcceptInviteInput {
+  inviteToken: String!
+}
+
+input RemoveMemberInput {
+  familyId: ID!
+  membershipId: ID!
+}
+
+input PromoteMemberInput {
+  familyId: ID!
+  membershipId: ID!
+}
+
+input CreateOpenFinanceConnectionInput {
+  itemId: String!
 }
