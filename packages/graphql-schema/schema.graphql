@@ -77,13 +77,16 @@ type FamilyInvitePayload {
   invite: FamilyInvite!
 }
 
-type Account {
+type Account implements Node {
   id: ID!
-  type: AccountType!
   name: String!
-  maskedNumber: String
-  currency: String!
+  type: AccountType!
   balance: Float!
+  currency: String!
+  connection: OpenFinanceConnection
+  sharedWithFamily: Boolean!
+  fullDetailShared: Boolean!
+  owner: User!
 }
 
 enum AccountType {
@@ -134,6 +137,17 @@ enum SharingScope {
   CATEGORY
 }
 
+type Card implements Node {
+  id: ID!
+  name: String!
+  lastFourDigits: String
+  limit: Float
+  currentInvoice: Float
+  dueDate: DateTime
+  sharedWithFamily: Boolean!
+  owner: User!
+}
+
 type Query {
   me: User!
   family(id: ID!): Family!
@@ -141,6 +155,8 @@ type Query {
   pluggyConnectToken: PluggyConnectToken!
   openFinanceConnections(familyId: ID!): [OpenFinanceConnection!]!
   sharingPermissions(familyId: ID!): [SharingPermission!]!
+  accounts(familyId: ID!): [Account!]!
+  cards(familyId: ID!): [Card!]!
 }
 
 type Mutation {
@@ -158,6 +174,8 @@ type Mutation {
   syncOpenFinanceConnection(connectionId: ID!): OpenFinanceConnection!
   revokeOpenFinanceConnection(connectionId: ID!): Boolean!
   updateSharingPermission(input: UpdateSharingPermissionInput!): SharingPermission!
+  updateAccountSharing(input: UpdateAccountSharingInput!): Account!
+  updateCardSharing(input: UpdateCardSharingInput!): Card!
 }
 
 input CompleteProfileInput {
@@ -196,4 +214,15 @@ input UpdateSharingPermissionInput {
   id: ID!
   sharedWithFamily: Boolean
   fullDetailShared: Boolean
+}
+
+input UpdateAccountSharingInput {
+  accountId: ID!
+  sharedWithFamily: Boolean!
+  fullDetailShared: Boolean!
+}
+
+input UpdateCardSharingInput {
+  cardId: ID!
+  sharedWithFamily: Boolean!
 }
