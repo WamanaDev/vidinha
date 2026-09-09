@@ -57,6 +57,8 @@ function getColors(
   switch (variant) {
     case "primary":
       return {
+        // specs/design/components/button.md §5.2 — loading nunca usa a cor de
+        // desabilitado: o fundo permanece cheio, só o conteúdo troca.
         bg: disabled
           ? action.primary.bgDisabled
           : pressed
@@ -102,7 +104,10 @@ export function Button({
   const [width, setWidth] = useState<number | undefined>(undefined);
 
   const dims = SIZES[size];
-  const colors = getColors(tokens, variant, pressed, disabled || loading);
+  // specs/design/components/button.md §5.2 — loading não é disabled visualmente:
+  // o fundo permanece cheio do variant e o spinner usa a cor de texto normal (fg).
+  // Só `disabled` (sem loading) usa as cores de estado desabilitado.
+  const colors = getColors(tokens, variant, pressed, disabled);
   const isGhostLike = variant === "ghost" || variant === "destructive";
 
   const handleLayout = (e: LayoutChangeEvent) => {
