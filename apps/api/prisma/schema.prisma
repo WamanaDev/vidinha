@@ -1,0 +1,461 @@
+// schema.prisma
+//
+// Fonte única de verdade do schema Prisma do Vidinha.
+// Extraído integralmente de specs/01-DATA-MODEL.md (v1) durante a reestruturação
+// documentada em specs/data-model/00-overview.md. Os arquivos em
+// specs/data-model/entities/ referenciam e reexplicam trechos deste arquivo,
+// mas este é o schema completo e literal.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+// ---------------------------------------------------------------------------
+// ENUMS
+// ---------------------------------------------------------------------------
+
+enum FamilyRole {
+  ADMIN
+  MEMBER
+}
+
+enum FamilyInviteStatus {
+  PENDING
+  ACCEPTED
+  DECLINED
+  EXPIRED
+  REVOKED
+}
+
+enum ConnectionStatus {
+  CONNECTED       // item ativo e sincronizando
+  UPDATING        // sincronização Pluggy em andamento
+  LOGIN_ERROR     // credenciais inválidas na instituição, requer reautenticação
+  OUTDATED        // Pluggy sinalizou item desatualizado
+  ERROR           // erro genérico reportado pelo provedor
+  REVOKED         // usuário revogou o consentimento (soft-delete lógico)
+}
+
+enum AccountType {
+  CHECKING        // conta corrente
+  SAVINGS         // poupança
+  INVESTMENT
+  OTHER
+}
+
+enum CardType {
+  CREDIT
+  DEBIT
+  PREPAID
+}
+
+enum TransactionType {
+  DEBIT
+  CREDIT
+}
+
+enum TransactionSource {
+  OPEN_FINANCE    // veio da sincronização Pluggy
+  MANUAL          // lançamento manual do usuário
+  RECURRING_EXPENSE // gerado a partir de um RecurringExpense vencido
+}
+
+enum SharableResourceType {
+  ACCOUNT
+  CARD
+  CATEGORY
+}
+
+enum RecurrenceFrequency {
+  WEEKLY
+  MONTHLY
+  BIMONTHLY
+  QUARTERLY
+  SEMIANNUAL
+  ANNUAL
+}
+
+enum AuditAction {
+  LOGIN
+  LOGOUT
+  FAMILY_CREATED
+  FAMILY_DELETED
+  FAMILY_MEMBER_ROLE_CHANGED
+  FAMILY_MEMBER_REMOVED
+  FAMILY_INVITE_CREATED
+  FAMILY_INVITE_ACCEPTED
+  OPEN_FINANCE_CONNECTED
+  OPEN_FINANCE_REVOKED
+  SHARING_PERMISSION_CREATED
+  SHARING_PERMISSION_UPDATED
+  SHARING_PERMISSION_REVOKED
+  TRANSACTION_HIDDEN_TOGGLED
+  USER_ACCOUNT_DELETION_REQUESTED
+  USER_ACCOUNT_DELETED
+}
+
+// ---------------------------------------------------------------------------
+// USER / FAMILY
+// ---------------------------------------------------------------------------
+
+/// Espelho local do usuário autenticado via Supabase Auth.
+/// `id` é o mesmo UUID do `auth.users.id` do Supabase (não gerado pelo Prisma).
+model User {
+  id          String   @id // = Supabase auth.users.id (uuid)
+  email       String   @unique
+  displayName String?
+  avatarUrl   String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  /// Soft-delete: usuário solicitou exclusão de conta (LGPD, ver 00-DECISIONS §10).
+  deletedAt   DateTime?
+
+  familyMemberships     FamilyMember[]
+  sentInvites           FamilyInvite[]        @relation("InviteSender")
+  connections           OpenFinanceConnection[]
+  accounts              Account[]
+  cards                 Card[]
+  categories            Category[]
+  recurringExpenses     RecurringExpense[]
+  sharingPermissions    SharingPermission[]
+  auditLogs             AuditLog[]
+
+  @@index([deletedAt])
+}
+
+/// Uma família é o contêiner de compartilhamento (2 a N integrantes).
+model Family {
+  id        String   @id @default(uuid())
+  name      String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  /// Soft-delete: preserva histórico de auditoria após exclusão da família.
+  deletedAt DateTime?
+
+  members            FamilyMember[]
+  invites            FamilyInvite[]
+  sharingPermissions SharingPermission[]
+  recurringExpenses  RecurringExpense[]
+  auditLogs          AuditLog[]
+
+  @@index([deletedAt])
+}
+
+/// Associação N:N entre User e Family, com papel (RBAC).
+model FamilyMember {
+  id        String     @id @default(uuid())
+  familyId  String
+  userId    String
+  role      FamilyRole @default(MEMBER)
+  joinedAt  DateTime   @default(now())
+  /// Soft-delete: saída/remoção do membro, mantém histórico de auditoria.
+  removedAt DateTime?
+
+  family Family @relation(fields: [familyId], references: [id], onDelete: Cascade)
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([familyId, userId])
+  @@index([userId])
+  @@index([familyId, role])
+}
+
+/// Convite para ingressar em uma família (fluxo de onboarding de novo membro).
+model FamilyInvite {
+  id          String             @id @default(uuid())
+  familyId    String
+  invitedById String
+  email       String
+  status      FamilyInviteStatus @default(PENDING)
+  token       String             @unique
+  expiresAt   DateTime
+  createdAt   DateTime           @default(now())
+  respondedAt DateTime?
+
+  family    Family @relation(fields: [familyId], references: [id], onDelete: Cascade)
+  invitedBy User   @relation("InviteSender", fields: [invitedById], references: [id])
+
+  @@index([familyId, status])
+  @@index([email])
+}
+
+// ---------------------------------------------------------------------------
+// OPEN FINANCE (PLUGGY)
+// ---------------------------------------------------------------------------
+
+/// Instituição financeira conhecida via catálogo de "connectors" do Pluggy.
+model Institution {
+  id                String   @id @default(uuid())
+  pluggyConnectorId Int      @unique
+  name              String
+  imageUrl          String?
+  primaryColor      String?
+  type              String   // ex.: "PERSONAL_BANK", "BUSINESS_BANK", "INVESTMENT" (enum livre do Pluggy)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  connections OpenFinanceConnection[]
+
+  @@index([name])
+}
+
+/// Representa um "item" Pluggy: uma conexão consentida entre o usuário e uma instituição.
+model OpenFinanceConnection {
+  id                String            @id @default(uuid())
+  userId            String
+  institutionId     String
+  pluggyItemId      String            @unique
+  status            ConnectionStatus  @default(UPDATING)
+  /// Timestamp da última sincronização bem-sucedida reportada pelo webhook/job.
+  lastSyncedAt      DateTime?
+  /// Preenchido quando status = REVOKED; soft-delete lógico (mantém histórico).
+  revokedAt         DateTime?
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+
+  user        User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  institution Institution @relation(fields: [institutionId], references: [id])
+  accounts    Account[]
+
+  @@index([userId, status])
+  @@index([status])
+}
+
+// ---------------------------------------------------------------------------
+// CONTAS, CARTÕES, CATEGORIAS
+// ---------------------------------------------------------------------------
+
+/// Conta bancária (corrente, poupança, investimento) — vinda do Open Finance
+/// ou cadastrada manualmente (connectionId nulo).
+model Account {
+  id           String       @id @default(uuid())
+  ownerId      String
+  connectionId String?
+  type         AccountType
+  name         String
+  /// Últimos 4 dígitos ou identificador não sensível (nunca número completo).
+  maskedNumber String?
+  currency     String       @default("BRL")
+  balance      Decimal      @db.Decimal(14, 2) @default(0)
+  balanceUpdatedAt DateTime?
+  isManual     Boolean      @default(false)
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+  /// Soft-delete: conta desconectada ou removida manualmente, preserva transações.
+  archivedAt   DateTime?
+
+  owner        User                   @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  connection   OpenFinanceConnection? @relation(fields: [connectionId], references: [id])
+  cards        Card[]
+  transactions Transaction[]
+  sharingPermissions SharingPermission[] @relation("AccountSharing")
+
+  @@index([ownerId])
+  @@index([connectionId])
+  @@index([ownerId, archivedAt])
+}
+
+/// Cartão (crédito/débito/pré-pago). Entidade própria, não um campo de Account
+/// (ver justificativa de modelagem na seção 6).
+model Card {
+  id              String   @id @default(uuid())
+  ownerId         String
+  /// Conta de fatura/débito vinculada (opcional: cartão pode não ter conta associada no MVP).
+  billingAccountId String?
+  type            CardType
+  brand           String?  // ex.: "VISA", "MASTERCARD" — string livre, sem enum fechado
+  name            String
+  /// Últimos 4 dígitos apenas (nunca PAN completo — ver 00-DECISIONS §2 sobre PCI-DSS).
+  lastFourDigits  String?
+  creditLimit     Decimal? @db.Decimal(14, 2)
+  currentInvoice  Decimal? @db.Decimal(14, 2)
+  isManual        Boolean  @default(false)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  archivedAt      DateTime?
+
+  owner          User          @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  billingAccount Account?      @relation(fields: [billingAccountId], references: [id])
+  transactions   Transaction[]
+  sharingPermissions SharingPermission[] @relation("CardSharing")
+
+  @@index([ownerId])
+  @@index([billingAccountId])
+  @@index([ownerId, archivedAt])
+}
+
+/// Categoria de despesa/receita. Categorias globais (default do sistema, ownerId nulo)
+/// coexistem com categorias customizadas por usuário.
+model Category {
+  id        String   @id @default(uuid())
+  ownerId   String?  // nulo = categoria padrão do sistema (seed)
+  name      String
+  icon      String?
+  color     String?
+  isIncome  Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  owner              User?               @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  transactions       Transaction[]
+  recurringExpenses  RecurringExpense[]
+  sharingPermissions SharingPermission[] @relation("CategorySharing")
+
+  @@unique([ownerId, name])
+  @@index([ownerId])
+}
+
+// ---------------------------------------------------------------------------
+// TRANSAÇÕES
+// ---------------------------------------------------------------------------
+
+/// Movimentação financeira: importada via Open Finance, lançada manualmente,
+/// ou gerada a partir de uma RecurringExpense vencida.
+model Transaction {
+  id          String            @id @default(uuid())
+  /// Exatamente um de accountId/cardId deve estar preenchido (validado na camada de serviço).
+  accountId   String?
+  cardId      String?
+  categoryId  String?
+  description String
+  amount      Decimal           @db.Decimal(14, 2)
+  type        TransactionType
+  source      TransactionSource @default(MANUAL)
+  /// Identificador da transação no Pluggy, para deduplicação em re-sync.
+  externalId  String?
+  occurredAt  DateTime
+  /// Oculta a transação da visão consolidada/compartilhada da família,
+  /// mesmo que a conta/cartão esteja compartilhado (ver seção 3).
+  hiddenFromFamily Boolean      @default(false)
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+
+  account  Account?  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  card     Card?     @relation(fields: [cardId], references: [id], onDelete: Cascade)
+  category Category? @relation(fields: [categoryId], references: [id])
+
+  // Índices para as queries mais comuns:
+  // 1) extrato de uma conta em um período
+  @@index([accountId, occurredAt])
+  // 2) fatura de um cartão em um período
+  @@index([cardId, occurredAt])
+  // 3) totais por categoria em um período (para relatório mensal)
+  @@index([categoryId, occurredAt])
+  // 4) deduplicação de sync Open Finance
+  @@unique([externalId, accountId, cardId])
+  // 5) filtro de visibilidade compartilhada (ver seção 3)
+  @@index([hiddenFromFamily])
+}
+
+// ---------------------------------------------------------------------------
+// DESPESAS RECORRENTES (MANUAIS, NÃO VINDAS DO OPEN FINANCE)
+// ---------------------------------------------------------------------------
+
+/// Compromisso recorrente cadastrado manualmente (aluguel, condomínio, internet etc.).
+/// Distinto de Transaction: representa a "regra" da recorrência, não cada ocorrência.
+model RecurringExpense {
+  id          String              @id @default(uuid())
+  /// Quem cadastrou o compromisso.
+  createdById String
+  /// Família à qual o compromisso pertence (compromissos recorrentes são,
+  /// por natureza, sempre associados a uma família — ver suposição A1, seção 7).
+  familyId    String
+  categoryId  String?
+  name        String
+  amount      Decimal             @db.Decimal(14, 2)
+  frequency   RecurrenceFrequency @default(MONTHLY)
+  dueDay      Int                 // dia do mês/ciclo de vencimento (1-31)
+  startDate   DateTime
+  endDate     DateTime?
+  isActive    Boolean             @default(true)
+  createdAt   DateTime            @default(now())
+  updatedAt   DateTime            @updatedAt
+  archivedAt  DateTime?
+
+  createdBy User     @relation(fields: [createdById], references: [id], onDelete: Cascade)
+  family    Family   @relation(fields: [familyId], references: [id], onDelete: Cascade)
+  category  Category? @relation(fields: [categoryId], references: [id])
+
+  @@index([familyId, isActive])
+  @@index([createdById])
+}
+
+// ---------------------------------------------------------------------------
+// COMPARTILHAMENTO
+// ---------------------------------------------------------------------------
+
+/// Concede visibilidade de um recurso (conta, cartão ou categoria) de um
+/// usuário para uma família. Entidade própria — ver justificativa na seção 6.
+model SharingPermission {
+  id           String               @id @default(uuid())
+  ownerId      String
+  familyId     String
+  resourceType SharableResourceType
+  /// FK polimórfica lógica: aponta para Account.id, Card.id ou Category.id,
+  /// conforme resourceType. Validado na camada de serviço (Prisma não modela
+  /// FK polimórfica nativamente) e reforçado pelas relações opcionais abaixo
+  /// para permitir joins/índices diretos por tipo.
+  resourceId   String
+  /// Quando true, a família vê o extrato transação-a-transação; quando false,
+  /// apenas totais consolidados (ver seção 3). Não se aplica a CATEGORY
+  /// (categoria compartilhada sempre mostra apenas consolidado por categoria).
+  allowFullDetail Boolean @default(false)
+  createdAt    DateTime             @default(now())
+  updatedAt    DateTime             @updatedAt
+  /// Soft-delete: revogação de compartilhamento mantém histórico para auditoria.
+  revokedAt    DateTime?
+
+  owner  User   @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  family Family @relation(fields: [familyId], references: [id], onDelete: Cascade)
+
+  // Relações opcionais só para permitir join direto quando resourceType bate;
+  // populadas/mantidas em sincronia pela camada de serviço.
+  account  Account?  @relation("AccountSharing", fields: [resourceId], references: [id], map: "sharing_account_fk")
+  card     Card?     @relation("CardSharing", fields: [resourceId], references: [id], map: "sharing_card_fk")
+  category Category? @relation("CategorySharing", fields: [resourceId], references: [id], map: "sharing_category_fk")
+
+  @@unique([ownerId, familyId, resourceType, resourceId])
+  @@index([familyId, resourceType, revokedAt])
+  @@index([ownerId])
+}
+
+// ---------------------------------------------------------------------------
+// AUDITORIA
+// ---------------------------------------------------------------------------
+
+/// Log de auditoria imutável (nunca é atualizado ou apagado por soft-delete
+/// de outras entidades — ver 00-DECISIONS §9, retenção mínima 12 meses).
+model AuditLog {
+  id        String      @id @default(uuid())
+  actorId   String?     // nulo em eventos de sistema (ex.: job de reconciliação)
+  familyId  String?
+  action    AuditAction
+  /// Dados adicionais do evento (ex.: role anterior/novo, ip, userAgent).
+  metadata  Json?
+  createdAt DateTime    @default(now())
+
+  actor  User?   @relation(fields: [actorId], references: [id], onDelete: SetNull)
+  family Family? @relation(fields: [familyId], references: [id], onDelete: SetNull)
+
+  @@index([actorId, createdAt])
+  @@index([familyId, createdAt])
+  @@index([action, createdAt])
+}
+
+// ---------------------------------------------------------------------------
+// NOTA SOBRE A FK POLIMÓRFICA DE SharingPermission
+// ---------------------------------------------------------------------------
+//
+// Prisma não suporta FKs polimórficas nativamente. A modelagem acima usa três
+// relações opcionais (account, card, category) todas apontando para a mesma
+// coluna resourceId, o que o Postgres permite (múltiplas FKs "soft" não são
+// impostas simultaneamente como constraint — na prática, a constraint de
+// integridade referencial real deve ser reforçada por um CHECK constraint via
+// migration SQL manual ou validação exclusiva na camada de serviço, já que o
+// banco não consegue expressar "FK para uma de três tabelas" declarativamente).
+// Documentado como suposição A2 em specs/data-model/00-overview.md.
