@@ -1,8 +1,15 @@
 {
   "version": 2,
-  "builds": [{ "src": "api/graphql.ts", "use": "@vercel/node" }],
-  "routes": [{ "src": "/graphql", "dest": "api/graphql.ts" }],
+  "builds": [
+    { "src": "api/graphql.ts", "use": "@vercel/node" },
+    { "src": "api/webhooks/pluggy.ts", "use": "@vercel/node" }
+  ],
+  "routes": [
+    { "src": "/graphql", "dest": "api/graphql.ts" },
+    { "src": "/webhooks/pluggy", "dest": "api/webhooks/pluggy.ts" }
+  ],
   "functions": {
-    "api/graphql.ts": { "maxDuration": 10 }
+    "api/graphql.ts": { "maxDuration": 10 },
+    "api/webhooks/pluggy.ts": { "maxDuration": 10 }
   }
 }

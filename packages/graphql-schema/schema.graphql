@@ -77,10 +77,52 @@ type FamilyInvitePayload {
   invite: FamilyInvite!
 }
 
+type Account {
+  id: ID!
+  type: AccountType!
+  name: String!
+  maskedNumber: String
+  currency: String!
+  balance: Float!
+}
+
+enum AccountType {
+  CHECKING
+  SAVINGS
+  INVESTMENT
+  OTHER
+}
+
+type OpenFinanceConnection {
+  id: ID!
+  institutionName: String!
+  institutionLogoUrl: String
+  status: ConnectionStatus!
+  lastSyncedAt: DateTime
+  createdAt: DateTime!
+  accounts: [Account!]!
+}
+
+enum ConnectionStatus {
+  CONNECTED
+  UPDATING
+  LOGIN_ERROR
+  OUTDATED
+  ERROR
+  REVOKED
+}
+
+type PluggyConnectToken {
+  connectToken: String!
+  expiresAt: DateTime!
+}
+
 type Query {
   me: User!
   family(id: ID!): Family!
   myFamilies: [FamilyMembership!]!
+  pluggyConnectToken: PluggyConnectToken!
+  openFinanceConnections(familyId: ID!): [OpenFinanceConnection!]!
 }
 
 type Mutation {
@@ -94,6 +136,9 @@ type Mutation {
   promoteMember(input: PromoteMemberInput!): FamilyPayload!
   leaveFamily(familyId: ID!): Boolean!
   deleteFamily(familyId: ID!): Boolean!
+  createOpenFinanceConnection(input: CreateOpenFinanceConnectionInput!): OpenFinanceConnection!
+  syncOpenFinanceConnection(connectionId: ID!): OpenFinanceConnection!
+  revokeOpenFinanceConnection(connectionId: ID!): Boolean!
 }
 
 input CompleteProfileInput {
@@ -122,4 +167,8 @@ input RemoveMemberInput {
 input PromoteMemberInput {
   familyId: ID!
   membershipId: ID!
+}
+
+input CreateOpenFinanceConnectionInput {
+  itemId: String!
 }

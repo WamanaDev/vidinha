@@ -21,6 +21,7 @@ import { AuditLogInterceptor } from "@common/interceptors/audit-log.interceptor"
 
 import { FamilyModule } from "@modules/family/family.module";
 import { AuditLogModule } from "@modules/audit-log/audit-log.module";
+import { OpenFinanceModule } from "@modules/open-finance/open-finance.module";
 
 @Module({
   imports: [
@@ -47,9 +48,10 @@ import { AuditLogModule } from "@modules/audit-log/audit-log.module";
     CaslModule,
     AuditLogModule,
     FamilyModule,
-    // SUPOSIÇÃO: open-finance, accounts, cards, transactions, sharing-permissions,
+    OpenFinanceModule,
+    // SUPOSIÇÃO: accounts, cards, transactions, sharing-permissions,
     // recurring-expenses e categories ainda não foram implementados neste bootstrap
-    // (fora do escopo desta tarefa — ver specs/backend/00-overview.md §3, passos 6-9).
+    // (fora do escopo desta tarefa — ver specs/backend/00-overview.md §3, passos 5, 7-9).
     // Serão importados aqui à medida que forem implementados.
   ],
   providers: [

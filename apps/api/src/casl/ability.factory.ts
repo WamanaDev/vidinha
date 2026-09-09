@@ -69,6 +69,15 @@ export class AbilityFactory {
     can(Action.Update, "Transaction", { ownerId: userId });
     can(Action.Delete, "Transaction", { ownerId: userId });
 
+    // Regra 4 — OpenFinanceConnection: dono sempre gerencia (ler, sincronizar,
+    // revogar) a própria conexão.
+    // SUPOSIÇÃO: o módulo `sharing-permissions` ainda não existe — quando for
+    // implementado, adicionar aqui `can(Action.Read, "OpenFinanceConnection", { ... })`
+    // para membros da família com quem uma conta (`Account`) vinculada à conexão
+    // tenha sido compartilhada via `SharingPermission` (recurso `ACCOUNT`).
+    // Por ora, apenas o dono tem qualquer permissão sobre `OpenFinanceConnection`.
+    can(Action.Manage, "OpenFinanceConnection", { userId });
+
     return build({
       detectSubjectType: (item: any) => item.constructor.name as Subjects,
     });

@@ -22,13 +22,18 @@ import { resolve } from "node:path";
 
 import { AuthResolver } from "../src/auth/auth.resolver";
 import { FamilyResolver } from "../src/modules/family/family.resolver";
+import { OpenFinanceResolver } from "../src/modules/open-finance/open-finance.resolver";
 
 async function generate() {
   const app = await NestFactory.create(GraphQLSchemaBuilderModule);
   await app.init();
 
   const schemaFactory = app.get(GraphQLSchemaFactory);
-  const schema = await schemaFactory.create([AuthResolver, FamilyResolver]);
+  const schema = await schemaFactory.create([
+    AuthResolver,
+    FamilyResolver,
+    OpenFinanceResolver,
+  ]);
 
   const outPath = resolve(
     __dirname,
