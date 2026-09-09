@@ -4,6 +4,7 @@ import { ConfigService } from "@nestjs/config";
 import { passportJwtSecret } from "jwks-rsa";
 import { ExtractJwt, Strategy } from "passport-jwt";
 import { AuthUser } from "@common/types/auth-user.type";
+import { AuthService } from "../auth.service";
 
 interface SupabaseJwtPayload {
   sub: string;
@@ -21,7 +22,10 @@ export class SupabaseJwtStrategy extends PassportStrategy(
   Strategy,
   "supabase-jwt",
 ) {
-  constructor(config: ConfigService) {
+  constructor(
+    config: ConfigService,
+    private readonly authService: AuthService,
+  ) {
     const supabaseUrl = config.get<string>("SUPABASE_URL");
     super({
       jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
@@ -41,8 +45,18 @@ export class SupabaseJwtStrategy extends PassportStrategy(
     });
   }
 
+  /**
+   * Just-in-time provisioning (specs/backend/common/jwt-auth-guard.md §2):
+   * todo request autenticado garante, via upsert, que o `User` local existe
+   * ANTES de o guard liberar o request — evita erro de chave estrangeira em
+   * resolvers que assumem `User` existente (ex.: `me`, `findMyFamilies`).
+   */
   async validate(payload: SupabaseJwtPayload): Promise<AuthUser> {
     if (!payload.sub) throw new UnauthorizedException();
+    await this.authService.upsertFromAuthToken(
+      payload.sub,
+      payload.email ?? "",
+    );
     return {
       userId: payload.sub,
       email: payload.email ?? "",
