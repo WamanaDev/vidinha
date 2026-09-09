@@ -8,6 +8,7 @@ import {
 } from "@prisma/client";
 import { PrismaService } from "@prisma-module/prisma.service";
 import { AuditLogService } from "@modules/audit-log/audit-log.service";
+import { AccountsService } from "@modules/accounts/accounts.service";
 import {
   ForbiddenAppException,
   NotFoundAppException,
@@ -18,7 +19,7 @@ import { OpenFinanceConnection } from "./entities/open-finance-connection.entity
 
 type ConnectionWithRelations = PrismaOpenFinanceConnection & {
   institution: PrismaInstitution;
-  accounts: PrismaAccount[];
+  accounts: (PrismaAccount & { owner: import("@prisma/client").User })[];
 };
 
 @Injectable()
@@ -29,6 +30,7 @@ export class OpenFinanceService {
     private readonly prisma: PrismaService,
     private readonly pluggyClient: PluggyClientService,
     private readonly auditLog: AuditLogService,
+    private readonly accountsService: AccountsService,
   ) {}
 
   /** Token de curta duração para inicializar o widget Pluggy Connect no client. */
@@ -56,11 +58,13 @@ export class OpenFinanceService {
 
     const connections = await this.prisma.openFinanceConnection.findMany({
       where: { userId },
-      include: { institution: true, accounts: true },
+      include: { institution: true, accounts: { include: { owner: true } } },
       orderBy: { createdAt: "desc" },
     });
 
-    return connections.map((c) => this.toEntity(c as ConnectionWithRelations));
+    return Promise.all(
+      connections.map((c) => this.toEntity(c as ConnectionWithRelations)),
+    );
   }
 
   /**
@@ -104,7 +108,7 @@ export class OpenFinanceService {
         status: this.mapPluggyStatus(item.status),
         lastSyncedAt: item.lastUpdatedAt ? new Date(item.lastUpdatedAt) : null,
       },
-      include: { institution: true, accounts: true },
+      include: { institution: true, accounts: { include: { owner: true } } },
     });
 
     await this.auditLog.record({
@@ -113,7 +117,7 @@ export class OpenFinanceService {
       metadata: { institutionName: institution.name, itemId: item.id },
     });
 
-    return this.toEntity(connection as ConnectionWithRelations);
+    return await this.toEntity(connection as ConnectionWithRelations);
   }
 
   /**
@@ -141,10 +145,10 @@ export class OpenFinanceService {
           ? new Date(item.lastUpdatedAt)
           : new Date(),
       },
-      include: { institution: true, accounts: true },
+      include: { institution: true, accounts: { include: { owner: true } } },
     });
 
-    return this.toEntity(updated as ConnectionWithRelations);
+    return await this.toEntity(updated as ConnectionWithRelations);
   }
 
   /**
@@ -317,7 +321,21 @@ export class OpenFinanceService {
     }
   }
 
-  private toEntity(connection: ConnectionWithRelations): OpenFinanceConnection {
+  /**
+   * SUPOSIÇÃO: os métodos deste service (`findVisibleConnections`,
+   * `createConnection`, `syncConnection`) não têm, em todos os casos, um
+   * contexto de família + `SharingPermission` já resolvido para as contas da
+   * conexão — por isso mapeamos cada `Account` via
+   * `AccountsService#toEntity` sem passar uma `SharingPermission` explícita,
+   * o que resulta em `sharedWithFamily: false`/`fullDetailShared: false`
+   * (opt-in nunca automático, ver 00-DECISIONS §1 — esse é o padrão seguro).
+   * O estado real e atualizado de compartilhamento de cada conta deve ser
+   * consultado pela query `accounts(familyId)` (módulo `accounts`), que
+   * resolve a `SharingPermission` corretamente por família.
+   */
+  private async toEntity(
+    connection: ConnectionWithRelations,
+  ): Promise<OpenFinanceConnection> {
     return {
       id: connection.id,
       institutionName: connection.institution.name,
@@ -325,14 +343,9 @@ export class OpenFinanceService {
       status: connection.status,
       lastSyncedAt: connection.lastSyncedAt ?? undefined,
       createdAt: connection.createdAt,
-      accounts: connection.accounts.map((a) => ({
-        id: a.id,
-        type: a.type,
-        name: a.name,
-        maskedNumber: a.maskedNumber ?? undefined,
-        currency: a.currency,
-        balance: Number(a.balance),
-      })),
+      accounts: await Promise.all(
+        connection.accounts.map((a) => this.accountsService.toEntity(a)),
+      ),
     };
   }
 }

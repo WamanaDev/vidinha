@@ -3,6 +3,7 @@ import { OpenFinanceService } from "./open-finance.service";
 import { PluggyClientService } from "./pluggy-client.service";
 import { PrismaService } from "@prisma-module/prisma.service";
 import { AuditLogService } from "@modules/audit-log/audit-log.service";
+import { AccountsService } from "@modules/accounts/accounts.service";
 import {
   ForbiddenAppException,
   NotFoundAppException,
@@ -28,6 +29,7 @@ describe("OpenFinanceService", () => {
     createConnectToken: jest.Mock;
   };
   let auditLog: { record: jest.Mock };
+  let accountsService: { toEntity: jest.Mock };
 
   const userId = "user-1";
   const otherUserId = "user-2";
@@ -51,6 +53,7 @@ describe("OpenFinanceService", () => {
       createConnectToken: jest.fn(),
     };
     auditLog = { record: jest.fn() };
+    accountsService = { toEntity: jest.fn() };
 
     const moduleRef = await Test.createTestingModule({
       providers: [
@@ -58,6 +61,7 @@ describe("OpenFinanceService", () => {
         { provide: PrismaService, useValue: prisma },
         { provide: PluggyClientService, useValue: pluggyClient },
         { provide: AuditLogService, useValue: auditLog },
+        { provide: AccountsService, useValue: accountsService },
       ],
     }).compile();
 
