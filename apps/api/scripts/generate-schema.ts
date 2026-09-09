@@ -23,6 +23,7 @@ import { resolve } from "node:path";
 import { AuthResolver } from "../src/auth/auth.resolver";
 import { FamilyResolver } from "../src/modules/family/family.resolver";
 import { OpenFinanceResolver } from "../src/modules/open-finance/open-finance.resolver";
+import { SharingPermissionsResolver } from "../src/modules/sharing-permissions/sharing-permissions.resolver";
 
 async function generate() {
   const app = await NestFactory.create(GraphQLSchemaBuilderModule);
@@ -33,6 +34,7 @@ async function generate() {
     AuthResolver,
     FamilyResolver,
     OpenFinanceResolver,
+    SharingPermissionsResolver,
   ]);
 
   const outPath = resolve(
