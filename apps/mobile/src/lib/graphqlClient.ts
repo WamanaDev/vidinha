@@ -47,6 +47,26 @@ export function registerSessionExpiredHandler(handler: () => void) {
   onSessionExpired = handler;
 }
 
+/**
+ * Coalescing de refresh de token: várias chamadas concorrentes que recebem
+ * UNAUTHENTICATED ao mesmo tempo compartilham uma única promise de refresh em
+ * vez de cada uma chamar `refreshSession()` independentemente (o que
+ * dispararia múltiplos refreshes simultâneos e poderia invalidar tokens uns
+ * dos outros).
+ */
+let refreshPromise: ReturnType<
+  typeof supabaseClient.auth.refreshSession
+> | null = null;
+
+function refreshSessionOnce() {
+  if (!refreshPromise) {
+    refreshPromise = supabaseClient.auth.refreshSession().finally(() => {
+      refreshPromise = null;
+    });
+  }
+  return refreshPromise;
+}
+
 function extractApiError(error: unknown): GraphQLApiError {
   // graphql-request lança ClientError com `.response.errors`
   const gqlErrors = (error as any)?.response?.errors as
@@ -91,8 +111,7 @@ export async function graphqlRequest<TData, TVariables extends object = object>(
     const apiError = extractApiError(error);
 
     if (apiError.code === "UNAUTHENTICATED" && !_isRetry) {
-      const { data, error: refreshError } =
-        await supabaseClient.auth.refreshSession();
+      const { data, error: refreshError } = await refreshSessionOnce();
       if (!refreshError && data.session) {
         return graphqlRequest<TData, TVariables>(document, variables, true);
       }
