@@ -28,6 +28,24 @@ import { OpenFinanceService } from "../../src/modules/open-finance/open-finance.
  * o próximo evento de webhook, o próximo `syncOpenFinanceConnection` manual do
  * usuário, ou o job diário de reconciliação (fora do escopo deste módulo).
  * Não há fila configurada no MVP para garantir a execução completa.
+ *
+ * CADASTRO DO WEBHOOK (passo manual único, feito via API do Pluggy — não dá
+ * para configurar o header customizado pelo Dashboard):
+ * ```bash
+ * curl -X POST https://api.pluggy.ai/webhooks \
+ *   -H "X-API-KEY: <api key obtida via POST /auth com CLIENT_ID/CLIENT_SECRET>" \
+ *   -H "Content-Type: application/json" \
+ *   -d '{
+ *     "url": "https://<seu-dominio-vercel>/api/webhooks/pluggy",
+ *     "event": "all",
+ *     "headers": { "X-Vidinha-Webhook-Secret": "<mesmo valor de PLUGGY_WEBHOOK_SECRET>" }
+ *   }'
+ * ```
+ * Refazer esse cadastro sempre que a URL do webhook mudar (ex.: trocar de
+ * preview para produção) ou o `PLUGGY_WEBHOOK_SECRET` for rotacionado.
+ * Defesa adicional opcional (não implementada neste MVP): a doc do Pluggy
+ * documenta um IP de origem fixo (`52.67.145.81`) que pode ser usado para
+ * allowlist na borda (Vercel/Cloudflare) como camada extra.
  */
 let cachedAppContext:
   Awaited<ReturnType<typeof NestFactory.createApplicationContext>> | undefined;
@@ -42,21 +60,26 @@ async function getOpenFinanceService(): Promise<OpenFinanceService> {
 }
 
 /**
- * Validação do segredo do webhook, isolada nesta função para ser fácil de
- * trocar quando o mecanismo real do Pluggy for confirmado.
+ * Validação do segredo do webhook via HEADER CUSTOMIZADO — mecanismo real do
+ * Pluggy, confirmado em https://docs.pluggy.ai/docs/webhooks:
  *
- * SUPOSIÇÃO (ainda não confirmada com a doc oficial do Pluggy para este caso
- * específico): o segredo é enviado como query param `?webhookSecret=...` na
- * URL do webhook configurada no Pluggy Dashboard. Caso o Pluggy real use um
- * header (ex.: `X-Pluggy-Signature`, possivelmente um HMAC do corpo em vez de
- * um segredo estático), trocar apenas a extração abaixo — nenhuma outra parte
- * do handler depende de como o segredo chega.
+ * O Pluggy NÃO assina o payload (sem HMAC/X-Signature). Em vez disso, ao
+ * CRIAR o webhook via API (`POST /webhooks` — não é possível pelo Dashboard),
+ * você define um objeto `headers` com um par chave/valor arbitrário
+ * (ex.: `{ "headers": { "X-Vidinha-Webhook-Secret": "<PLUGGY_WEBHOOK_SECRET>" } }`).
+ * O Pluggy ecoa esse header exato em toda notificação subsequente. Por isso o
+ * cadastro do webhook precisa ser feito uma vez via chamada de API (não pelo
+ * dashboard), incluindo esse header — ver nota no final do arquivo com o
+ * comando de registro.
+ *
+ * Nome do header escolhido: `X-Vidinha-Webhook-Secret` (arbitrário, definido
+ * por nós no cadastro — não é um nome reservado do Pluggy).
  */
 function verifyWebhookSecret(req: VercelRequest): boolean {
   const expected = process.env.PLUGGY_WEBHOOK_SECRET;
   if (!expected) return false; // fail secure: sem segredo configurado, nenhum webhook é aceito
 
-  const received = req.query.webhookSecret;
+  const received = req.headers["x-vidinha-webhook-secret"];
   const providedSecret = Array.isArray(received) ? received[0] : received;
   if (!providedSecret) return false;
 
