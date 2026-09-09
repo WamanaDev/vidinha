@@ -20,10 +20,13 @@ export const envSchema = z.object({
   SENTRY_DSN_BACKEND: z.string().optional(),
   LOG_LEVEL: z.string().default("debug"),
   CORS_ALLOWED_ORIGINS: z.string().optional(),
+  // Sem `.default()` propositalmente: quando a env var não é setada explicitamente,
+  // `graphql.config.ts` decide o valor via NODE_ENV (fail-safe: introspection
+  // desabilitada em produção). Ver auditoria de segurança / specs/security/asvs-checklist.md.
   GRAPHQL_INTROSPECTION_ENABLED: z
     .string()
-    .default("true")
-    .transform((v) => v === "true"),
+    .optional()
+    .transform((v) => (v === undefined ? undefined : v === "true")),
 });
 
 export type EnvConfig = z.infer<typeof envSchema>;
