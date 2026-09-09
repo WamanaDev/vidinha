@@ -117,12 +117,30 @@ type PluggyConnectToken {
   expiresAt: DateTime!
 }
 
+type SharingPermission implements Node {
+  id: ID!
+  family: Family!
+  owner: User!
+  scope: SharingScope!
+  targetId: ID!
+  sharedWithFamily: Boolean!
+  fullDetailShared: Boolean!
+  updatedAt: DateTime!
+}
+
+enum SharingScope {
+  ACCOUNT
+  CARD
+  CATEGORY
+}
+
 type Query {
   me: User!
   family(id: ID!): Family!
   myFamilies: [FamilyMembership!]!
   pluggyConnectToken: PluggyConnectToken!
   openFinanceConnections(familyId: ID!): [OpenFinanceConnection!]!
+  sharingPermissions(familyId: ID!): [SharingPermission!]!
 }
 
 type Mutation {
@@ -139,6 +157,7 @@ type Mutation {
   createOpenFinanceConnection(input: CreateOpenFinanceConnectionInput!): OpenFinanceConnection!
   syncOpenFinanceConnection(connectionId: ID!): OpenFinanceConnection!
   revokeOpenFinanceConnection(connectionId: ID!): Boolean!
+  updateSharingPermission(input: UpdateSharingPermissionInput!): SharingPermission!
 }
 
 input CompleteProfileInput {
@@ -171,4 +190,10 @@ input PromoteMemberInput {
 
 input CreateOpenFinanceConnectionInput {
   itemId: String!
+}
+
+input UpdateSharingPermissionInput {
+  id: ID!
+  sharedWithFamily: Boolean
+  fullDetailShared: Boolean
 }
