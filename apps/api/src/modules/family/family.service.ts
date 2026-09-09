@@ -1,6 +1,7 @@
 import { Injectable } from "@nestjs/common";
 import { randomBytes, createHash } from "node:crypto";
 import {
+  Prisma,
   FamilyRole,
   FamilyInviteStatus,
   AuditAction,
@@ -205,6 +206,12 @@ export class FamilyService {
    * Remove um membro da família.
    * Regra de negócio central: NÃO é permitido remover o último ADMIN ativo da
    * família (uma família nunca pode ficar sem administrador).
+   *
+   * A contagem de admins ativos e o `update` que efetivamente remove o membro
+   * acontecem dentro da MESMA transação `Serializable` (via `assertNotLastAdmin`),
+   * eliminando a janela de TOCTOU em que duas remoções/saídas concorrentes do
+   * penúltimo e último admin poderiam ambas passar pela checagem antes de
+   * qualquer `update` ser aplicado.
    */
   async removeMember(
     actingUserId: string,
@@ -223,25 +230,19 @@ export class FamilyService {
       throw new NotFoundAppException("Membro não encontrado nesta família.");
     }
 
-    if (membership.role === FamilyRole.ADMIN) {
-      const activeAdminCount = await this.prisma.familyMember.count({
-        where: {
-          familyId: input.familyId,
-          role: FamilyRole.ADMIN,
-          removedAt: null,
-        },
-      });
-      if (activeAdminCount <= 1) {
-        throw new ForbiddenAppException(
-          "Não é possível remover o único administrador da família. Promova outro membro antes.",
-        );
-      }
-    }
+    await this.prisma.$transaction(
+      async (tx) => {
+        if (membership.role === FamilyRole.ADMIN) {
+          await this.assertNotLastAdmin(tx, input.familyId);
+        }
 
-    await this.prisma.familyMember.update({
-      where: { id: input.membershipId },
-      data: { removedAt: new Date() },
-    });
+        await tx.familyMember.update({
+          where: { id: input.membershipId },
+          data: { removedAt: new Date() },
+        });
+      },
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+    );
 
     await this.auditLog.record({
       actorId: actingUserId,
@@ -300,25 +301,26 @@ export class FamilyService {
    * Usuário sai voluntariamente da própria família.
    * SUPOSIÇÃO: mesma regra do último admin de `removeMember` se aplica — um
    * admin único não pode sair sem antes promover outro membro.
+   *
+   * Assim como em `removeMember`, a checagem e o `update` acontecem dentro da
+   * mesma transação `Serializable` via `assertNotLastAdmin`.
    */
   async leaveFamily(userId: string, familyId: string): Promise<boolean> {
     const membership = await this.assertActiveMember(familyId, userId);
 
-    if (membership.role === FamilyRole.ADMIN) {
-      const activeAdminCount = await this.prisma.familyMember.count({
-        where: { familyId, role: FamilyRole.ADMIN, removedAt: null },
-      });
-      if (activeAdminCount <= 1) {
-        throw new ForbiddenAppException(
-          "Não é possível sair da família sendo o único administrador. Promova outro membro antes.",
-        );
-      }
-    }
+    await this.prisma.$transaction(
+      async (tx) => {
+        if (membership.role === FamilyRole.ADMIN) {
+          await this.assertNotLastAdmin(tx, familyId);
+        }
 
-    await this.prisma.familyMember.update({
-      where: { id: membership.id },
-      data: { removedAt: new Date() },
-    });
+        await tx.familyMember.update({
+          where: { id: membership.id },
+          data: { removedAt: new Date() },
+        });
+      },
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+    );
 
     await this.auditLog.record({
       actorId: userId,
@@ -335,10 +337,14 @@ export class FamilyService {
   }
 
   /**
-   * Exclui a família (soft-delete). Exige `aal2` quando o usuário tem MFA
-   * habilitado — checagem de step-up feita no resolver/guard (ver
-   * specs/backend/common/casl-ability-factory.md §4); aqui apenas a regra de
-   * negócio (só ADMIN, via CASL no resolver).
+   * Exclui a família (soft-delete). Regra de negócio aplicada: só ADMIN pode
+   * excluir (via CASL no resolver).
+   *
+   * TODO(pós-MVP): esta operação deveria exigir step-up de autenticação
+   * (`aal2`) quando o usuário tem MFA habilitado, conforme
+   * specs/security/asvs-checklist.md item A4. ESSA PROTEÇÃO AINDA NÃO EXISTE —
+   * não há checagem de `aal` implementada em nenhuma camada (resolver, guard
+   * ou service). Não presuma que ela está ativa.
    */
   async deleteFamily(userId: string, familyId: string): Promise<boolean> {
     await this.assertActiveMember(familyId, userId);
@@ -375,6 +381,28 @@ export class FamilyService {
       throw new NotFoundAppException("Família não encontrada.");
     }
     return membership;
+  }
+
+  /**
+   * Garante, dentro de uma transação `Serializable`, que remover/desativar o
+   * admin atual não deixaria a família sem nenhum admin ativo. DEVE ser chamado
+   * a partir de dentro de um `this.prisma.$transaction(async (tx) => ...)` com
+   * `tx` passado adiante, para que a contagem e o `update` subsequente sejam
+   * atômicos e uma segunda transação concorrente falhe/serialize em vez de
+   * também enxergar a contagem "antiga".
+   */
+  private async assertNotLastAdmin(
+    tx: Prisma.TransactionClient,
+    familyId: string,
+  ): Promise<void> {
+    const activeAdminCount = await tx.familyMember.count({
+      where: { familyId, role: FamilyRole.ADMIN, removedAt: null },
+    });
+    if (activeAdminCount <= 1) {
+      throw new ForbiddenAppException(
+        "Não é possível remover o único administrador da família. Promova outro membro antes.",
+      );
+    }
   }
 
   private async findFamilyOrThrow(
@@ -452,14 +480,10 @@ export class FamilyService {
         mfaEnabled: false,
         createdAt: invite.invitedBy.createdAt,
       },
-      // SUPOSIÇÃO: o enum GraphQL InviteStatus (ver entities/family-invite.entity.ts)
-      // tem 4 valores, enquanto o Prisma FamilyInviteStatus tem 5 (inclui DECLINED,
-      // ver specs/data-model/schema.prisma). Mapeado para REVOKED por ser o mais
-      // próximo semanticamente (convite não será aceito) — divergência entre
-      // specs/backend/modules/family/family.module.md e specs/data-model/schema.prisma.
-      status: (invite.status === FamilyInviteStatus.DECLINED
-        ? InviteStatus.REVOKED
-        : invite.status) as unknown as InviteStatus,
+      // Enum GraphQL InviteStatus (entities/family-invite.entity.ts) espelha 1:1 o
+      // Prisma FamilyInviteStatus, incluindo DECLINED (ver
+      // specs/backend/modules/family/family.module.md).
+      status: invite.status as unknown as InviteStatus,
       expiresAt: invite.expiresAt,
     };
   }

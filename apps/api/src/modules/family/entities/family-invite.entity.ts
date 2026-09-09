@@ -8,6 +8,7 @@ export enum InviteStatus {
   ACCEPTED = "ACCEPTED",
   EXPIRED = "EXPIRED",
   REVOKED = "REVOKED",
+  DECLINED = "DECLINED",
 }
 registerEnumType(InviteStatus, { name: "InviteStatus" });
 

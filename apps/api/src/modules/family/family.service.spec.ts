@@ -44,7 +44,11 @@ describe("FamilyService — regra do último admin", () => {
         update: jest.fn(),
         $transaction: jest.fn(),
       },
-      $transaction: jest.fn(),
+      // `removeMember`/`leaveFamily` chamam `this.prisma.$transaction(async (tx) => ...)`
+      // para garantir atomicidade na regra do último admin (ver assertNotLastAdmin).
+      // O mock simplesmente invoca o callback passando o próprio `prisma` como `tx`,
+      // já que os mocks de `familyMember.count`/`update` são os mesmos objetos.
+      $transaction: jest.fn(async (cb: any) => cb(prisma)),
     };
     auditLog = { record: jest.fn() };
 
@@ -194,6 +198,103 @@ describe("FamilyService — regra do último admin", () => {
     await expect(
       service.removeMember(actingAdminId, { familyId, membershipId: "x" }),
     ).rejects.toBeInstanceOf(NotFoundAppException);
+  });
+});
+
+describe("FamilyService — leaveFamily", () => {
+  let service: FamilyService;
+  let prisma: {
+    familyMember: {
+      findUnique: jest.Mock;
+      count: jest.Mock;
+      update: jest.Mock;
+    };
+    $transaction: jest.Mock;
+  };
+  let auditLog: { record: jest.Mock };
+
+  const familyId = "family-1";
+  const actingAdminId = "user-admin";
+
+  beforeEach(async () => {
+    prisma = {
+      familyMember: {
+        findUnique: jest.fn(),
+        count: jest.fn(),
+        update: jest.fn(),
+      },
+      $transaction: jest.fn(async (cb: any) => cb(prisma)),
+    };
+    auditLog = { record: jest.fn() };
+
+    const moduleRef = await Test.createTestingModule({
+      providers: [
+        FamilyService,
+        { provide: PrismaService, useValue: prisma },
+        { provide: AuditLogService, useValue: auditLog },
+      ],
+    }).compile();
+
+    service = moduleRef.get(FamilyService);
+  });
+
+  it("impede que o último ADMIN ativo saia voluntariamente da família", async () => {
+    prisma.familyMember.findUnique.mockResolvedValueOnce({
+      id: "membership-admin",
+      userId: actingAdminId,
+      familyId,
+      removedAt: null,
+      role: FamilyRole.ADMIN,
+    }); // assertActiveMember
+
+    prisma.familyMember.count.mockResolvedValue(1); // só há 1 admin ativo
+
+    await expect(
+      service.leaveFamily(actingAdminId, familyId),
+    ).rejects.toBeInstanceOf(ForbiddenAppException);
+
+    expect(prisma.familyMember.update).not.toHaveBeenCalled();
+    expect(auditLog.record).not.toHaveBeenCalled();
+  });
+
+  it("permite que um ADMIN saia quando há outro ADMIN ativo na família", async () => {
+    prisma.familyMember.findUnique.mockResolvedValueOnce({
+      id: "membership-admin",
+      userId: actingAdminId,
+      familyId,
+      removedAt: null,
+      role: FamilyRole.ADMIN,
+    });
+
+    prisma.familyMember.count.mockResolvedValue(2); // 2 admins ativos
+    prisma.familyMember.update.mockResolvedValue({});
+
+    await expect(service.leaveFamily(actingAdminId, familyId)).resolves.toBe(
+      true,
+    );
+
+    expect(prisma.familyMember.update).toHaveBeenCalledWith({
+      where: { id: "membership-admin" },
+      data: { removedAt: expect.any(Date) },
+    });
+    expect(auditLog.record).toHaveBeenCalled();
+  });
+
+  it("permite que um MEMBER comum saia sem checar contagem de admins", async () => {
+    prisma.familyMember.findUnique.mockResolvedValueOnce({
+      id: "membership-member",
+      userId: "some-member",
+      familyId,
+      removedAt: null,
+      role: FamilyRole.MEMBER,
+    });
+
+    prisma.familyMember.update.mockResolvedValue({});
+
+    await service.leaveFamily("some-member", familyId);
+
+    expect(prisma.familyMember.count).not.toHaveBeenCalled();
+    expect(prisma.familyMember.update).toHaveBeenCalled();
   });
 });
 

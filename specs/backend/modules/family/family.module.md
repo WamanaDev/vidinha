@@ -21,12 +21,12 @@ Query `myFamilies` e o SDL completo do domínio estão na seção 2 abaixo.
 
 ```typescript
 // apps/api/src/modules/family/family.module.ts
-import { Module } from '@nestjs/common';
-import { PrismaModule } from '@prisma-module/prisma.module';
-import { CaslModule } from '@casl/casl.module';
-import { AuditLogModule } from '@modules/audit-log/audit-log.module';
-import { FamilyResolver } from './family.resolver';
-import { FamilyService } from './family.service';
+import { Module } from "@nestjs/common";
+import { PrismaModule } from "@prisma-module/prisma.module";
+import { CaslModule } from "@casl/casl.module";
+import { AuditLogModule } from "@modules/audit-log/audit-log.module";
+import { FamilyResolver } from "./family.resolver";
+import { FamilyService } from "./family.service";
 
 @Module({
   imports: [PrismaModule, CaslModule, AuditLogModule],
@@ -74,6 +74,7 @@ enum InviteStatus {
   ACCEPTED
   EXPIRED
   REVOKED
+  DECLINED
 }
 
 input CreateFamilyInput {
@@ -139,13 +140,13 @@ type Mutation {
 
 ```typescript
 // apps/api/src/modules/family/entities/family.entity.ts
-import { ObjectType, Field, ID, registerEnumType } from '@nestjs/graphql';
-import { FamilyRole as PrismaFamilyRole } from '@prisma/client';
-import { Node } from '@common/types/node.interface';
-import { FamilyMembership } from './family-membership.entity';
+import { ObjectType, Field, ID, registerEnumType } from "@nestjs/graphql";
+import { FamilyRole as PrismaFamilyRole } from "@prisma/client";
+import { Node } from "@common/types/node.interface";
+import { FamilyMembership } from "./family-membership.entity";
 
 export { PrismaFamilyRole as FamilyRole };
-registerEnumType(PrismaFamilyRole, { name: 'FamilyRole' });
+registerEnumType(PrismaFamilyRole, { name: "FamilyRole" });
 
 @ObjectType({ implements: () => [Node] })
 export class Family implements Node {
@@ -168,11 +169,11 @@ export class Family implements Node {
 
 ```typescript
 // apps/api/src/modules/family/entities/family-membership.entity.ts
-import { ObjectType, Field, ID } from '@nestjs/graphql';
-import { FamilyRole } from '@prisma/client';
-import { Node } from '@common/types/node.interface';
-import { Family } from './family.entity';
-import { User } from '@auth/entities/user.entity';
+import { ObjectType, Field, ID } from "@nestjs/graphql";
+import { FamilyRole } from "@prisma/client";
+import { Node } from "@common/types/node.interface";
+import { Family } from "./family.entity";
+import { User } from "@auth/entities/user.entity";
 
 @ObjectType({ implements: () => [Node] })
 export class FamilyMembership implements Node {
@@ -195,18 +196,19 @@ export class FamilyMembership implements Node {
 
 ```typescript
 // apps/api/src/modules/family/entities/family-invite.entity.ts
-import { ObjectType, Field, ID, registerEnumType } from '@nestjs/graphql';
-import { Node } from '@common/types/node.interface';
-import { Family } from './family.entity';
-import { User } from '@auth/entities/user.entity';
+import { ObjectType, Field, ID, registerEnumType } from "@nestjs/graphql";
+import { Node } from "@common/types/node.interface";
+import { Family } from "./family.entity";
+import { User } from "@auth/entities/user.entity";
 
 export enum InviteStatus {
-  PENDING = 'PENDING',
-  ACCEPTED = 'ACCEPTED',
-  EXPIRED = 'EXPIRED',
-  REVOKED = 'REVOKED',
+  PENDING = "PENDING",
+  ACCEPTED = "ACCEPTED",
+  EXPIRED = "EXPIRED",
+  REVOKED = "REVOKED",
+  DECLINED = "DECLINED",
 }
-registerEnumType(InviteStatus, { name: 'InviteStatus' });
+registerEnumType(InviteStatus, { name: "InviteStatus" });
 
 @ObjectType({ implements: () => [Node] })
 export class FamilyInvite implements Node {
@@ -232,9 +234,9 @@ export class FamilyInvite implements Node {
 
 ```typescript
 // apps/api/src/modules/family/entities/family-payload.entity.ts
-import { ObjectType, Field } from '@nestjs/graphql';
-import { Family } from './family.entity';
-import { FamilyInvite } from './family-invite.entity';
+import { ObjectType, Field } from "@nestjs/graphql";
+import { Family } from "./family.entity";
+import { FamilyInvite } from "./family-invite.entity";
 
 @ObjectType()
 export class FamilyPayload {
@@ -297,20 +299,23 @@ async myFamilies(@CurrentUser() user: AuthUser): Promise<FamilyMembership[]> {
 
 ```typescript
 // apps/api/src/modules/family/family.resolver.ts
-import { Resolver, Query, Mutation, Args } from '@nestjs/graphql';
-import { UseGuards } from '@nestjs/common';
-import { CurrentUser } from '@common/decorators/current-user.decorator';
-import { CheckAbility } from '@common/decorators/check-ability.decorator';
-import { PoliciesGuard } from '@common/guards/policies.guard';
-import { Action } from '@casl/action.enum';
-import { AuthUser } from '@common/types/auth-user.type';
-import { FamilyService } from './family.service';
-import { CreateFamilyInput } from './dto/create-family.input';
-import { InviteFamilyMemberInput } from './dto/invite-family-member.input';
-import { RemoveMemberInput } from './dto/remove-member.input';
-import { PromoteMemberInput } from './dto/promote-member.input';
-import { FamilyMembership } from './entities/family-membership.entity';
-import { FamilyPayload, FamilyInvitePayload } from './entities/family-payload.entity';
+import { Resolver, Query, Mutation, Args } from "@nestjs/graphql";
+import { UseGuards } from "@nestjs/common";
+import { CurrentUser } from "@common/decorators/current-user.decorator";
+import { CheckAbility } from "@common/decorators/check-ability.decorator";
+import { PoliciesGuard } from "@common/guards/policies.guard";
+import { Action } from "@casl/action.enum";
+import { AuthUser } from "@common/types/auth-user.type";
+import { FamilyService } from "./family.service";
+import { CreateFamilyInput } from "./dto/create-family.input";
+import { InviteFamilyMemberInput } from "./dto/invite-family-member.input";
+import { RemoveMemberInput } from "./dto/remove-member.input";
+import { PromoteMemberInput } from "./dto/promote-member.input";
+import { FamilyMembership } from "./entities/family-membership.entity";
+import {
+  FamilyPayload,
+  FamilyInvitePayload,
+} from "./entities/family-payload.entity";
 
 @Resolver(() => FamilyMembership)
 @UseGuards(PoliciesGuard) // JwtAuthGuard já é global (ver app.module.ts abaixo); este guard só resolve CASL
@@ -325,37 +330,52 @@ export class FamilyResolver {
   @Mutation(() => FamilyPayload)
   async createFamily(
     @CurrentUser() user: AuthUser,
-    @Args('input') input: CreateFamilyInput,
+    @Args("input") input: CreateFamilyInput,
   ): Promise<FamilyPayload> {
     const family = await this.familyService.createFamily(user.userId, input);
     return { family };
   }
 
-  @CheckAbility({ action: Action.Manage, subject: 'FamilyMember', resolveFamilyId: (a) => a.input.familyId })
+  @CheckAbility({
+    action: Action.Manage,
+    subject: "FamilyMember",
+    resolveFamilyId: (a) => a.input.familyId,
+  })
   @Mutation(() => FamilyInvitePayload)
   async inviteMember(
     @CurrentUser() user: AuthUser,
-    @Args('input') input: InviteFamilyMemberInput,
+    @Args("input") input: InviteFamilyMemberInput,
   ): Promise<FamilyInvitePayload> {
-    const { invite } = await this.familyService.inviteMember(user.userId, input);
+    const { invite } = await this.familyService.inviteMember(
+      user.userId,
+      input,
+    );
     return { invite: invite as any }; // mapeamento completo omitido por brevidade — segue padrão da seção 5 acima
   }
 
-  @CheckAbility({ action: Action.Manage, subject: 'FamilyMember', resolveFamilyId: (a) => a.input.familyId })
+  @CheckAbility({
+    action: Action.Manage,
+    subject: "FamilyMember",
+    resolveFamilyId: (a) => a.input.familyId,
+  })
   @Mutation(() => FamilyPayload)
   async removeMember(
     @CurrentUser() user: AuthUser,
-    @Args('input') input: RemoveMemberInput,
+    @Args("input") input: RemoveMemberInput,
   ): Promise<FamilyPayload> {
     const family = await this.familyService.removeMember(user.userId, input);
     return { family };
   }
 
-  @CheckAbility({ action: Action.Manage, subject: 'FamilyMember', resolveFamilyId: (a) => a.input.familyId })
+  @CheckAbility({
+    action: Action.Manage,
+    subject: "FamilyMember",
+    resolveFamilyId: (a) => a.input.familyId,
+  })
   @Mutation(() => FamilyPayload)
   async promoteMember(
     @CurrentUser() user: AuthUser,
-    @Args('input') input: PromoteMemberInput,
+    @Args("input") input: PromoteMemberInput,
   ): Promise<FamilyPayload> {
     const family = await this.familyService.promoteMember(user.userId, input);
     return { family };
@@ -369,51 +389,56 @@ Ambos `JwtAuthGuard`/`GraphQLExceptionFilter` são registrados **globalmente** v
 
 ```typescript
 // apps/api/src/app.module.ts
-import { Module } from '@nestjs/common';
-import { APP_GUARD, APP_FILTER, APP_PIPE, APP_INTERCEPTOR } from '@nestjs/core';
-import { ValidationPipe } from '@nestjs/common';
-import { GraphQLModule } from '@nestjs/graphql';
-import { ApolloDriver, ApolloDriverConfig } from '@nestjs/apollo';
-import { ThrottlerModule } from '@nestjs/throttler';
-import { ConfigModule } from '@nestjs/config';
-import { LoggerModule } from 'nestjs-pino';
+import { Module } from "@nestjs/common";
+import { APP_GUARD, APP_FILTER, APP_PIPE, APP_INTERCEPTOR } from "@nestjs/core";
+import { ValidationPipe } from "@nestjs/common";
+import { GraphQLModule } from "@nestjs/graphql";
+import { ApolloDriver, ApolloDriverConfig } from "@nestjs/apollo";
+import { ThrottlerModule } from "@nestjs/throttler";
+import { ConfigModule } from "@nestjs/config";
+import { LoggerModule } from "nestjs-pino";
 
-import { envValidationSchema } from '@config/env.validation';
-import { graphqlConfig } from '@config/graphql.config';
-import { PrismaModule } from '@prisma-module/prisma.module';
-import { AuthModule } from '@auth/auth.module';
-import { CaslModule } from '@casl/casl.module';
+import { envValidationSchema } from "@config/env.validation";
+import { graphqlConfig } from "@config/graphql.config";
+import { PrismaModule } from "@prisma-module/prisma.module";
+import { AuthModule } from "@auth/auth.module";
+import { CaslModule } from "@casl/casl.module";
 
-import { JwtAuthGuard } from '@common/guards/jwt-auth.guard';
-import { GqlThrottlerGuard } from '@common/guards/gql-throttler.guard';
-import { GraphQLExceptionFilter } from '@common/filters/graphql-exception.filter';
-import { LoggingInterceptor } from '@common/interceptors/logging.interceptor';
-import { AuditLogInterceptor } from '@common/interceptors/audit-log.interceptor';
+import { JwtAuthGuard } from "@common/guards/jwt-auth.guard";
+import { GqlThrottlerGuard } from "@common/guards/gql-throttler.guard";
+import { GraphQLExceptionFilter } from "@common/filters/graphql-exception.filter";
+import { LoggingInterceptor } from "@common/interceptors/logging.interceptor";
+import { AuditLogInterceptor } from "@common/interceptors/audit-log.interceptor";
 
-import { FamilyModule } from '@modules/family/family.module';
-import { OpenFinanceModule } from '@modules/open-finance/open-finance.module';
-import { AccountsModule } from '@modules/accounts/accounts.module';
-import { CardsModule } from '@modules/cards/cards.module';
-import { TransactionsModule } from '@modules/transactions/transactions.module';
-import { SharingPermissionsModule } from '@modules/sharing-permissions/sharing-permissions.module';
-import { RecurringExpensesModule } from '@modules/recurring-expenses/recurring-expenses.module';
-import { CategoriesModule } from '@modules/categories/categories.module';
-import { AuditLogModule } from '@modules/audit-log/audit-log.module';
+import { FamilyModule } from "@modules/family/family.module";
+import { OpenFinanceModule } from "@modules/open-finance/open-finance.module";
+import { AccountsModule } from "@modules/accounts/accounts.module";
+import { CardsModule } from "@modules/cards/cards.module";
+import { TransactionsModule } from "@modules/transactions/transactions.module";
+import { SharingPermissionsModule } from "@modules/sharing-permissions/sharing-permissions.module";
+import { RecurringExpensesModule } from "@modules/recurring-expenses/recurring-expenses.module";
+import { CategoriesModule } from "@modules/categories/categories.module";
+import { AuditLogModule } from "@modules/audit-log/audit-log.module";
 
 @Module({
   imports: [
-    ConfigModule.forRoot({ isGlobal: true, validationSchema: envValidationSchema }),
-    LoggerModule.forRoot({ pinoHttp: { redact: ['req.headers.authorization'] } }), // F3 de 04-SECURITY-COMPLIANCE.md
+    ConfigModule.forRoot({
+      isGlobal: true,
+      validationSchema: envValidationSchema,
+    }),
+    LoggerModule.forRoot({
+      pinoHttp: { redact: ["req.headers.authorization"] },
+    }), // F3 de 04-SECURITY-COMPLIANCE.md
     GraphQLModule.forRootAsync<ApolloDriverConfig>({
       driver: ApolloDriver,
       useFactory: graphqlConfig, // autoSchemaFile, formatError, plugins de depth/complexity, introspection só fora de produção
     }),
     ThrottlerModule.forRoot([
-      { name: 'default', ttl: 60_000, limit: 120 },
-      { name: 'auth-sensitive', ttl: 60_000, limit: 5 },
-      { name: 'invite', ttl: 60_000, limit: 10 },
-      { name: 'openfinance-sync', ttl: 60_000, limit: 6 },
-      { name: 'mutation-write', ttl: 60_000, limit: 60 },
+      { name: "default", ttl: 60_000, limit: 120 },
+      { name: "auth-sensitive", ttl: 60_000, limit: 5 },
+      { name: "invite", ttl: 60_000, limit: 10 },
+      { name: "openfinance-sync", ttl: 60_000, limit: 6 },
+      { name: "mutation-write", ttl: 60_000, limit: 60 },
     ]),
     PrismaModule,
     AuthModule,

@@ -66,6 +66,7 @@ enum InviteStatus {
   ACCEPTED
   EXPIRED
   REVOKED
+  DECLINED
 }
 
 type FamilyPayload {
