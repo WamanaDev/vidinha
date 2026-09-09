@@ -1,0 +1,41 @@
+{
+  "name": "vidinha",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Vidinha — gestão financeira compartilhada para casais e famílias.",
+  "engines": {
+    "node": ">=20.0.0",
+    "pnpm": ">=9.0.0"
+  },
+  "scripts": {
+    "prepare": "husky",
+    "lint": "pnpm -r --filter=./apps/* run lint",
+    "typecheck": "pnpm -r --filter=./apps/* run typecheck",
+    "test": "pnpm -r --filter=./apps/* run test",
+    "changeset": "changeset",
+    "changeset:version": "changeset version",
+    "changeset:status": "changeset status --since=origin/main"
+  },
+  "devDependencies": {
+    "@changesets/cli": "^2.27.9",
+    "@commitlint/cli": "^19.5.0",
+    "@commitlint/config-conventional": "^19.5.0",
+    "husky": "^9.1.6",
+    "lint-staged": "^15.2.10",
+    "prettier": "^3.3.3",
+    "typescript": "^5.6.3"
+  },
+  "lint-staged": {
+    "apps/api/**/*.{ts,js}": [
+      "pnpm --filter api exec eslint --fix",
+      "pnpm --filter api exec prettier --write"
+    ],
+    "apps/mobile/**/*.{ts,tsx,js,jsx}": [
+      "pnpm --filter mobile exec eslint --fix",
+      "pnpm --filter mobile exec prettier --write"
+    ],
+    "*.md": [
+      "prettier --write"
+    ]
+  }
+}

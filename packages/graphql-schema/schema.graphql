@@ -1,0 +1,21 @@
+# Vidinha — SDL GraphQL (fonte única)
+#
+# Este arquivo é a fonte da verdade do contrato GraphQL entre apps/api e apps/mobile.
+# O conteúdo completo (types, inputs, enums, queries, mutations por domínio) está
+# especificado em specs/backend/ (contrato por módulo) e no histórico de
+# specs/02-API-AUTH.md (redirecionado). Preencher este arquivo é o primeiro passo
+# de implementação real do módulo correspondente — ver specs/backend/00-overview.md
+# para a ordem recomendada.
+#
+# Enquanto os módulos são implementados, mantenha este schema sempre compilável
+# (SDL válido) — adicione tipos conforme os módulos forem construídos, na ordem:
+# 1. auth/user  2. family  3. sharing-permissions  4. open-finance
+# 5. accounts/cards/transactions  6. recurring-expenses/categories  7. audit-log
+
+type Query {
+  _placeholder: Boolean
+}
+
+type Mutation {
+  _placeholder: Boolean
+}

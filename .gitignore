@@ -1,0 +1,52 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build outputs
+dist/
+build/
+.next/
+.expo/
+.expo-shared/
+web-build/
+
+# Env files (nunca commitar segredos)
+.env
+.env.*
+!.env.example
+
+# Prisma
+apps/api/prisma/migrations/dev-*
+
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# Editor / OS
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+Thumbs.db
+
+# Testes / cobertura
+coverage/
+.turbo/
+
+# EAS / Expo
+*.jks
+*.p8
+*.p12
+*.key
+*.mobileprovision
+credentials.json
+
+# Changesets (pre-release scratch, mantemos .changeset/ versionado)
+.changeset/pre.json
+
+# Estado de runtime do Claude Code (não versionar); .claude/agents/ é versionado propositalmente
+.claude/scheduled_tasks.lock
+.claude/*.lock
+.claude/sessions/
+.claude/settings.local.json

@@ -1,0 +1,18 @@
+{
+  "name": "@vidinha/graphql-types",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Tipos TypeScript gerados via GraphQL Code Generator a partir de @vidinha/graphql-schema, consumidos por apps/api e apps/mobile.",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "scripts": {
+    "codegen": "graphql-codegen --config codegen.yml"
+  },
+  "dependencies": {
+    "@vidinha/graphql-schema": "workspace:*"
+  },
+  "devDependencies": {
+    "@graphql-codegen/cli": "^5.0.3",
+    "@graphql-codegen/typescript": "^4.1.0"
+  }
+}
