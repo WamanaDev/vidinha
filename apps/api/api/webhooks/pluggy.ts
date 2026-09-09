@@ -9,13 +9,14 @@ import type { VercelRequest, VercelResponse } from "@vercel/node";
 type AppModuleType = typeof import("../../src/app.module").AppModule;
 type OpenFinanceServiceType =
   typeof import("../../src/modules/open-finance/open-finance.service").OpenFinanceService;
-// eslint-disable-next-line @typescript-eslint/no-require-imports
+/* eslint-disable @typescript-eslint/no-require-imports -- ver justificativa
+   acima: valor carregado em runtime do dist/ já compilado, não do TS fonte */
 const AppModule = require("../../dist/src/app.module")
   .AppModule as AppModuleType;
-// eslint-disable-next-line @typescript-eslint/no-require-imports
 const OpenFinanceService =
   require("../../dist/src/modules/open-finance/open-finance.service")
     .OpenFinanceService as OpenFinanceServiceType;
+/* eslint-enable @typescript-eslint/no-require-imports */
 
 /**
  * Webhook REST do Pluggy, separado do endpoint GraphQL principal
