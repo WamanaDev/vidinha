@@ -149,3 +149,21 @@ export interface FamilyInvite {
 export interface FamilyInvitePayload {
   invite: FamilyInvite;
 }
+
+// --- Tipos abaixo espelham `SharingPermission` do SDL real
+// (packages/graphql-schema/schema.graphql, módulo sharing-permissions),
+// adicionados para a tela `(app)/sharing/*`. Mesma justificativa dos blocos
+// acima: placeholder até o codegen real gerar @vidinha/graphql-types.
+
+export type SharingScope = "ACCOUNT" | "CARD" | "CATEGORY";
+
+export interface SharingPermission {
+  id: string;
+  family: FamilySummary;
+  owner: UserSummary;
+  scope: SharingScope;
+  targetId: string;
+  sharedWithFamily: boolean;
+  fullDetailShared: boolean;
+  updatedAt: string;
+}
