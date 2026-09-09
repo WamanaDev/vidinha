@@ -41,7 +41,9 @@ type Query {
 }
 
 type Mutation {
-  createOpenFinanceConnection(input: CreateOpenFinanceConnectionInput!): OpenFinanceConnection!
+  createOpenFinanceConnection(
+    input: CreateOpenFinanceConnectionInput!
+  ): OpenFinanceConnection!
   syncOpenFinanceConnection(connectionId: ID!): OpenFinanceConnection!
   revokeOpenFinanceConnection(connectionId: ID!): Boolean!
 }
@@ -58,7 +60,7 @@ type Mutation {
 - **PCI-DSS:** como o Vidinha nunca recebe PAN completo, CVV ou dados brutos de tarifa (apenas dados agregados via Pluggy), o escopo de PCI-DSS é tratado como **fora do perímetro direto do Vidinha**; a obrigação de conformidade recai sobre o Pluggy e as instituições financeiras. Validar contratualmente com o Pluggy antes de produção.
 - **Isolamento da API key do Pluggy (PoLP):** toda chamada HTTP ao Pluggy deve passar por um `pluggy-client.service.ts` dedicado (separado do `open-finance.service.ts`), isolando a superfície de chamada externa e mantendo a API key confinada a um único ponto (`04-SECURITY-COMPLIANCE §6`) — facilita mock em teste.
 - **Rate limiting:** `syncOpenFinanceConnection` usa o named throttler `openfinance-sync` (6/min), respeitando o rate limit do Pluggy — ver [`../../common/rate-limiting.md`](../../common/rate-limiting.md).
-- **Webhook do Pluggy:** implementado como function serverless separada (`api/webhooks/pluggy.ts`), fora do `JwtAuthGuard` global (autenticado por segredo compartilhado do Pluggy, não por JWT de usuário) — ver [`../../common/vercel-serverless-handler.md`](../../common/vercel-serverless-handler.md), seção de suposições.
+- **Webhook do Pluggy:** implementado como function serverless separada (`api/webhooks/pluggy.ts`), fora do `JwtAuthGuard` global. **Autenticação confirmada** (não é suposição): o Pluggy não assina o payload (sem HMAC); a autenticidade é garantida por um **header HTTP customizado** (`X-Vidinha-Webhook-Secret`) definido por nós ao cadastrar o webhook via `POST /webhooks` na API do Pluggy (não é possível pelo Dashboard) — o Pluggy ecoa esse header em toda notificação subsequente. Payload real: `{ event: "item/created"|"item/updated"|"item/error", eventId, itemId, triggeredBy, clientUserId, error? }`; resposta exigida em até 5s. Defesa adicional opcional: IP de origem fixo do Pluggy (`52.67.145.81`) para allowlist na borda.
 - **Autorização:** `openFinanceConnections(familyId)` só retorna conexões visíveis ao usuário dentro daquela família (dono, ou compartilhadas via `sharing-permissions` — ver [`../sharing-permissions/sharing-permissions.module.md`](../sharing-permissions/sharing-permissions.module.md)); revogar uma conexão só é permitido pelo dono (checagem de posse no service, nunca no DTO, conforme convenção 2.3 de `../../00-overview.md`).
 
 ## 3. Estrutura de arquivos esperada (seguindo o padrão `family`)
