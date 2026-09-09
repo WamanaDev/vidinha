@@ -5,6 +5,40 @@ import type { ExpoConfig, ConfigContext } from "expo/config";
 // e os pins de SSL, que não são segredo (são hashes públicos da chave do servidor).
 const SSL_PIN_PRIMARY = process.env.SSL_PIN_PRIMARY ?? "";
 const SSL_PIN_BACKUP = process.env.SSL_PIN_BACKUP ?? "";
+const API_HOSTNAME = (() => {
+  try {
+    return new URL(process.env.EXPO_PUBLIC_API_URL ?? "").hostname;
+  } catch {
+    return "";
+  }
+})();
+
+// 00-DECISIONS.md §6 — SSL Pinning é decisão obrigatória de MVP (pinning de
+// chave pública, 2 pins ativos: atual + backup). O plugin exige EAS Dev Client
+// (não roda no Expo Go). Ainda NÃO temos os pins reais nem domínio de produção
+// (backend não provisionado), então o plugin só é incluído quando as duas
+// variáveis de ambiente (SSL_PIN_PRIMARY / SSL_PIN_BACKUP) e o domínio da API
+// estiverem preenchidos — isso mantém a infraestrutura pronta e o build
+// funcionando em desenvolvimento local, sem quebrar por falta de segredo que
+// ainda não existe. ANTES do primeiro build de produção via EAS, preencher
+// SSL_PIN_PRIMARY / SSL_PIN_BACKUP (hashes SPKI reais do certificado do
+// backend) nas env vars do projeto EAS — sem isso, o app de produção
+// **não terá pinning ativo**, o que viola a decisão de arquitetura.
+const sslPinningPlugin: [string, Record<string, unknown>] | null =
+  SSL_PIN_PRIMARY && SSL_PIN_BACKUP && API_HOSTNAME
+    ? [
+        "react-native-ssl-public-key-pinning",
+        {
+          domains: [
+            {
+              pattern: API_HOSTNAME,
+              includeSubdomains: true,
+              publicKeyHashes: [SSL_PIN_PRIMARY, SSL_PIN_BACKUP],
+            },
+          ],
+        },
+      ]
+    : null;
 
 export default ({ config }: ConfigContext): ExpoConfig => ({
   ...config,
@@ -44,11 +78,9 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
         backgroundColor: "#FAF7F2",
       },
     ],
-    // TODO (00-DECISIONS.md §6): plugin de SSL pinning (ex.:
-    // 'react-native-ssl-public-key-pinning') exige EAS Dev Client custom e os
-    // pins reais do backend (SSL_PIN_PRIMARY / SSL_PIN_BACKUP acima), que ainda
-    // não existem porque a API/infra de produção não foi provisionada. Ativar
-    // este plugin assim que houver domínio + certificado reais.
+    // Ver comentário acima de `sslPinningPlugin`: entra na lista só quando os
+    // pins reais + domínio da API estiverem configurados via env var.
+    ...(sslPinningPlugin ? [sslPinningPlugin] : []),
   ],
   extra: {
     apiUrl: process.env.EXPO_PUBLIC_API_URL ?? "",
