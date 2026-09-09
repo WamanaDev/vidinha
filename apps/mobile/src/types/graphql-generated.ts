@@ -53,3 +53,65 @@ export interface TransactionFilterInput {
 export interface TransactionOrderInput {
   [key: string]: unknown;
 }
+
+// --- Tipos abaixo espelham o SDL real já implementado em
+// packages/graphql-schema/schema.graphql (family + open-finance), adicionados
+// para as telas de dashboard/accounts/cards/family. Mesma justificativa do
+// bloco de Transaction acima: ficam aqui só até o codegen real gerar
+// @vidinha/graphql-types a partir do schema.
+
+export type FamilyRole = "ADMIN" | "MEMBER";
+
+export interface UserSummary {
+  id: string;
+  email: string;
+  displayName?: string | null;
+  avatarUrl?: string | null;
+}
+
+export interface FamilySummary {
+  id: string;
+  name: string;
+  createdAt: string;
+}
+
+export interface FamilyMembership {
+  id: string;
+  family: FamilySummary;
+  user: UserSummary;
+  role: FamilyRole;
+  joinedAt: string;
+}
+
+export interface Family extends FamilySummary {
+  members: FamilyMembership[];
+  myRole: FamilyRole;
+}
+
+export interface FamilyPayload {
+  family: Family;
+}
+
+export type AccountType = "CHECKING" | "SAVINGS" | "INVESTMENT" | "OTHER";
+
+export interface Account {
+  id: string;
+  type: AccountType;
+  name: string;
+  maskedNumber?: string | null;
+  currency: string;
+  balance: number;
+}
+
+export type ConnectionStatus =
+  "CONNECTED" | "UPDATING" | "LOGIN_ERROR" | "OUTDATED" | "ERROR" | "REVOKED";
+
+export interface OpenFinanceConnection {
+  id: string;
+  institutionName: string;
+  institutionLogoUrl?: string | null;
+  status: ConnectionStatus;
+  lastSyncedAt?: string | null;
+  createdAt: string;
+  accounts: Account[];
+}
