@@ -115,3 +115,37 @@ export interface OpenFinanceConnection {
   createdAt: string;
   accounts: Account[];
 }
+
+// --- Tipos abaixo espelham `User`/`DataExportPayload`/`FamilyInvite` do SDL
+// real (packages/graphql-schema/schema.graphql), adicionados para as telas de
+// onboarding (create-or-join-family, invite-members) e settings (profile,
+// security-mfa, data-export-deletion). Mesma justificativa dos blocos acima:
+// placeholder até o codegen real gerar @vidinha/graphql-types.
+
+export interface User {
+  id: string;
+  email: string;
+  displayName?: string | null;
+  avatarUrl?: string | null;
+  mfaEnabled: boolean;
+  createdAt: string;
+}
+
+export interface DataExportPayload {
+  downloadUrl: string;
+  expiresAt: string;
+}
+
+export type InviteStatus =
+  "PENDING" | "ACCEPTED" | "EXPIRED" | "REVOKED" | "DECLINED";
+
+export interface FamilyInvite {
+  id: string;
+  email: string;
+  status: InviteStatus;
+  expiresAt: string;
+}
+
+export interface FamilyInvitePayload {
+  invite: FamilyInvite;
+}

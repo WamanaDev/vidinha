@@ -179,6 +179,86 @@ export function promoteMember(input: PromoteMemberInput) {
   );
 }
 
+const CREATE_FAMILY_MUTATION = /* GraphQL */ `
+  mutation CreateFamily($input: CreateFamilyInput!) {
+    createFamily(input: $input) {
+      family {
+        id
+        name
+        createdAt
+        myRole
+        members {
+          id
+          role
+          joinedAt
+          user {
+            id
+            email
+            displayName
+            avatarUrl
+          }
+        }
+      }
+    }
+  }
+`;
+
+interface CreateFamilyInput {
+  name: string;
+}
+
+interface CreateFamilyResult {
+  createFamily: FamilyPayload;
+}
+
+/** Criar uma família nova — `(onboarding)/create-family`. */
+export function createFamily(input: CreateFamilyInput) {
+  return graphqlRequest<CreateFamilyResult, { input: CreateFamilyInput }>(
+    CREATE_FAMILY_MUTATION,
+    { input },
+  );
+}
+
+const ACCEPT_INVITE_MUTATION = /* GraphQL */ `
+  mutation AcceptInvite($input: AcceptInviteInput!) {
+    acceptInvite(input: $input) {
+      family {
+        id
+        name
+        createdAt
+        myRole
+        members {
+          id
+          role
+          joinedAt
+          user {
+            id
+            email
+            displayName
+            avatarUrl
+          }
+        }
+      }
+    }
+  }
+`;
+
+interface AcceptInviteInput {
+  inviteToken: string;
+}
+
+interface AcceptInviteResult {
+  acceptInvite: FamilyPayload;
+}
+
+/** Entrar em uma família via token de convite — `(onboarding)/join-family`. */
+export function acceptInvite(input: AcceptInviteInput) {
+  return graphqlRequest<AcceptInviteResult, { input: AcceptInviteInput }>(
+    ACCEPT_INVITE_MUTATION,
+    { input },
+  );
+}
+
 const LEAVE_FAMILY_MUTATION = /* GraphQL */ `
   mutation LeaveFamily($familyId: ID!) {
     leaveFamily(familyId: $familyId)
