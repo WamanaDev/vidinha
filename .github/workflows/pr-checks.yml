@@ -74,12 +74,18 @@ jobs:
           node-version: 20
           cache: pnpm
       - run: pnpm install
+      # Mesma guarda inline de lint-typecheck-mobile (ver comentário lá) —
+      # protege contra o fallback para o script agregado da raiz quando
+      # apps/api ainda não é um pacote real em alguma branch.
       - working-directory: apps/api
-        run: pnpm exec prisma generate
-      - working-directory: apps/api
-        run: pnpm lint
-      - working-directory: apps/api
-        run: pnpm typecheck
+        run: |
+          if [ -f package.json ]; then
+            pnpm exec prisma generate
+            pnpm lint
+            pnpm typecheck
+          else
+            echo "apps/api ainda não tem package.json nesta branch — pulando lint/typecheck."
+          fi
 
   unit-tests-api:
     runs-on: ubuntu-latest
@@ -94,9 +100,13 @@ jobs:
           cache: pnpm
       - run: pnpm install
       - working-directory: apps/api
-        run: pnpm exec prisma generate
-      - working-directory: apps/api
-        run: pnpm test
+        run: |
+          if [ -f package.json ]; then
+            pnpm exec prisma generate
+            pnpm test
+          else
+            echo "apps/api ainda não tem package.json nesta branch — pulando testes."
+          fi
 
   lint-typecheck-mobile:
     runs-on: ubuntu-latest
@@ -110,10 +120,28 @@ jobs:
           node-version: 20
           cache: pnpm
       - run: pnpm install
+      # Guarda inline: enquanto apps/mobile ainda não é um pacote real em
+      # todas as branches (bootstrapping do monorepo — feature/api-bootstrap
+      # não tem o app mobile mesclado nela), rodar `pnpm lint`/`typecheck`
+      # sem essa checagem faz o pnpm cair no script agregado da raiz
+      # (`pnpm -r --filter=./apps/* run ...`), que re-executa o typecheck da
+      # API SEM o `prisma generate` do job dedicado, gerando falsos erros de
+      # tipo. Remover esta guarda quando todas as branches tiverem
+      # apps/mobile/package.json de verdade.
       - working-directory: apps/mobile
-        run: pnpm lint
+        run: |
+          if [ -f package.json ]; then
+            pnpm lint
+          else
+            echo "apps/mobile ainda não tem package.json nesta branch — pulando lint."
+          fi
       - working-directory: apps/mobile
-        run: pnpm typecheck
+        run: |
+          if [ -f package.json ]; then
+            pnpm typecheck
+          else
+            echo "apps/mobile ainda não tem package.json nesta branch — pulando typecheck."
+          fi
 
   dependency-audit:
     runs-on: ubuntu-latest
