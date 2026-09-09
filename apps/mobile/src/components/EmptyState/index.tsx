@@ -43,7 +43,10 @@ export function EmptyState({
             width: 88,
             height: 88,
             borderRadius: 999,
-            backgroundColor: tokens.bg.surfaceSunken,
+            // specs/design/tokens/elevation-radius-icons.md §3 — círculo de
+            // ícone usa a superfície elevada (#2F2925 no dark), não o fundo
+            // da tela (surfaceSunken).
+            backgroundColor: tokens.bg.surfaceRaised,
             justifyContent: "center",
             alignItems: "center",
             marginBottom: space[6],
