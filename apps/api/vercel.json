@@ -1,13 +1,8 @@
 {
   "version": 2,
-  "builds": [
-    { "src": "api/graphql.ts", "use": "@vercel/node" },
-    { "src": "api/webhooks/pluggy.ts", "use": "@vercel/node" }
-  ],
-  "routes": [
-    { "src": "/graphql", "dest": "api/graphql.ts" },
-    { "src": "/webhooks/pluggy", "dest": "api/webhooks/pluggy.ts" }
-  ],
+  "buildCommand": "pnpm run build",
+  "installCommand": "pnpm install",
+  "rewrites": [{ "source": "/graphql", "destination": "/api/graphql" }],
   "functions": {
     "api/graphql.ts": { "maxDuration": 10 },
     "api/webhooks/pluggy.ts": { "maxDuration": 10 }

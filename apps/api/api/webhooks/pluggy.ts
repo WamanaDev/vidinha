@@ -1,8 +1,21 @@
 import { NestFactory } from "@nestjs/core";
 import { timingSafeEqual } from "node:crypto";
 import type { VercelRequest, VercelResponse } from "@vercel/node";
-import { AppModule } from "../../src/app.module";
-import { OpenFinanceService } from "../../src/modules/open-finance/open-finance.service";
+// Tipo resolvido contra o TS fonte, valor carregado do JS já compilado por
+// `nest build` em runtime — ver justificativa completa em api/graphql.ts
+// (esbuild, usado pelo builder da Vercel, não emite `emitDecoratorMetadata`
+// corretamente; um `import` estático para `../../dist/...` também não
+// funciona no build local, pois `dist` ainda não existe nesse mesmo passo).
+type AppModuleType = typeof import("../../src/app.module").AppModule;
+type OpenFinanceServiceType =
+  typeof import("../../src/modules/open-finance/open-finance.service").OpenFinanceService;
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const AppModule = require("../../dist/src/app.module")
+  .AppModule as AppModuleType;
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const OpenFinanceService =
+  require("../../dist/src/modules/open-finance/open-finance.service")
+    .OpenFinanceService as OpenFinanceServiceType;
 
 /**
  * Webhook REST do Pluggy, separado do endpoint GraphQL principal
@@ -50,7 +63,9 @@ import { OpenFinanceService } from "../../src/modules/open-finance/open-finance.
 let cachedAppContext:
   Awaited<ReturnType<typeof NestFactory.createApplicationContext>> | undefined;
 
-async function getOpenFinanceService(): Promise<OpenFinanceService> {
+async function getOpenFinanceService(): Promise<
+  InstanceType<OpenFinanceServiceType>
+> {
   if (!cachedAppContext) {
     cachedAppContext = await NestFactory.createApplicationContext(AppModule, {
       logger: ["error", "warn"],

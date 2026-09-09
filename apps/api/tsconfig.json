@@ -10,6 +10,7 @@
     "emitDecoratorMetadata": true,
     "experimentalDecorators": true,
     "allowJs": false,
+    "declaration": true,
     "strictPropertyInitialization": false,
     "noUncheckedIndexedAccess": false,
     "paths": {
