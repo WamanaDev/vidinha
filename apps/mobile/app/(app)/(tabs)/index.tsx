@@ -1,7 +1,13 @@
 import { useCallback } from "react";
 import { ScrollView, StyleSheet, View, Text } from "react-native";
 import { useRouter } from "expo-router";
-import { Landmark, CreditCard, Receipt, Users } from "lucide-react-native";
+import {
+  Landmark,
+  CreditCard,
+  Receipt,
+  Users,
+  Settings,
+} from "lucide-react-native";
 import { Skeleton } from "@components/Skeleton";
 import { ErrorState } from "@components/ErrorState";
 import { useAuth } from "@lib/authContext";
@@ -40,6 +46,10 @@ export default function HomeScreen() {
   );
   const goToFamily = useCallback(
     () => router.push("/(app)/(tabs)/family"),
+    [router],
+  );
+  const goToSettings = useCallback(
+    () => router.push("/(app)/settings"),
     [router],
   );
 
@@ -129,6 +139,13 @@ export default function HomeScreen() {
             icon={<Users color={tokens.icon.active} size={24} />}
             label="Família"
             onPress={goToFamily}
+          />
+        </View>
+        <View style={styles.shortcut}>
+          <TabShortcutCard
+            icon={<Settings color={tokens.icon.active} size={24} />}
+            label="Configurações"
+            onPress={goToSettings}
           />
         </View>
       </View>
