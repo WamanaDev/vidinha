@@ -116,6 +116,16 @@ export interface OpenFinanceConnection {
   accounts: Account[];
 }
 
+// `pluggyConnectToken` (Query) — SDL real, packages/graphql-schema/schema.graphql.
+export interface PluggyConnectToken {
+  connectToken: string;
+  expiresAt: string;
+}
+
+export interface CreateOpenFinanceConnectionInput {
+  itemId: string;
+}
+
 // --- Tipos abaixo espelham `User`/`DataExportPayload`/`FamilyInvite` do SDL
 // real (packages/graphql-schema/schema.graphql), adicionados para as telas de
 // onboarding (create-or-join-family, invite-members) e settings (profile,
