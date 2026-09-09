@@ -1,0 +1,8 @@
+{
+  "version": 2,
+  "builds": [{ "src": "api/graphql.ts", "use": "@vercel/node" }],
+  "routes": [{ "src": "/graphql", "dest": "api/graphql.ts" }],
+  "functions": {
+    "api/graphql.ts": { "maxDuration": 10 }
+  }
+}

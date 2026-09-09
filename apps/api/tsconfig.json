@@ -1,0 +1,26 @@
+{
+  "extends": "../../packages/config/tsconfig.base.json",
+  "compilerOptions": {
+    "module": "CommonJS",
+    "moduleResolution": "Node",
+    "target": "ES2022",
+    "baseUrl": "./src",
+    "outDir": "./dist",
+    "rootDir": ".",
+    "emitDecoratorMetadata": true,
+    "experimentalDecorators": true,
+    "allowJs": false,
+    "strictPropertyInitialization": false,
+    "noUncheckedIndexedAccess": false,
+    "paths": {
+      "@common/*": ["common/*"],
+      "@config/*": ["config/*"],
+      "@prisma-module/*": ["prisma/*"],
+      "@auth/*": ["auth/*"],
+      "@casl/*": ["casl/*"],
+      "@modules/*": ["modules/*"]
+    }
+  },
+  "include": ["src/**/*.ts", "api/**/*.ts", "test/**/*.ts"],
+  "exclude": ["node_modules", "dist"]
+}
