@@ -1,0 +1,152 @@
+name: PR Checks
+
+# Ver specs/infra/ci-cd-pr-checks.md para o desenho completo pretendido.
+# Esta é uma primeira versão pragmática, adaptada aos scripts que realmente
+# existem no monorepo hoje. Simplificações deliberadas em relação à spec
+# original (documentadas para revisão futura):
+#   - `pnpm install` sem `--frozen-lockfile`: o pnpm-lock.yaml ainda não está
+#     consistentemente commitado em todas as branches; usar frozen-lockfile
+#     agora bloquearia PRs por divergência de lockfile, não por problema real
+#     de código. Revisitar quando o lockfile estiver estável na main.
+#   - `dependency-audit` roda como informativo (`continue-on-error`), não
+#     bloqueia merge — projeto tem poucos dias, ainda não triamos achados de
+#     `pnpm audit` para decidir o que é aceitável.
+#   - `changeset-check` e `graphql-schema-check` da spec ainda não estão
+#     implementados aqui (scripts `changeset status`/`schema:generate` como
+#     gate de CI) — próximo passo, não bloqueiam este primeiro corte.
+#   - `integration-tests-api` (Postgres efêmero via `services:`) fica de fora
+#     por ora — os testes de integração do projeto ainda são um stub
+#     (`describe.skip`), então não há nada real para rodar contra um Postgres
+#     de CI ainda.
+#
+# Job final `pr-checks` agrega o resultado dos demais e é o único cujo NOME
+# precisa bater exatamente com o "required status check" configurado no
+# Ruleset de proteção da `main` no GitHub.
+
+on:
+  pull_request:
+    branches: [main]
+
+jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      api: ${{ steps.filter.outputs.api }}
+      mobile: ${{ steps.filter.outputs.mobile }}
+      shared: ${{ steps.filter.outputs.shared }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            api:
+              - 'apps/api/**'
+            mobile:
+              - 'apps/mobile/**'
+            shared:
+              - 'packages/**'
+
+  commitlint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+      - run: pnpm install
+      - name: Validar Conventional Commits do PR
+        run: pnpm exec commitlint --from ${{ github.event.pull_request.base.sha }} --to ${{ github.event.pull_request.head.sha }} --verbose
+
+  lint-typecheck-api:
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.api == 'true' || needs.changes.outputs.shared == 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+      - run: pnpm install
+      - working-directory: apps/api
+        run: pnpm exec prisma generate
+      - working-directory: apps/api
+        run: pnpm lint
+      - working-directory: apps/api
+        run: pnpm typecheck
+
+  unit-tests-api:
+    runs-on: ubuntu-latest
+    needs: [changes, lint-typecheck-api]
+    if: needs.changes.outputs.api == 'true' || needs.changes.outputs.shared == 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+      - run: pnpm install
+      - working-directory: apps/api
+        run: pnpm exec prisma generate
+      - working-directory: apps/api
+        run: pnpm test
+
+  lint-typecheck-mobile:
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.mobile == 'true' || needs.changes.outputs.shared == 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+      - run: pnpm install
+      - working-directory: apps/mobile
+        run: pnpm lint
+      - working-directory: apps/mobile
+        run: pnpm typecheck
+
+  dependency-audit:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+      - run: pnpm install
+      - run: pnpm audit --audit-level=high
+
+  pr-checks:
+    name: pr-checks.yml
+    runs-on: ubuntu-latest
+    needs:
+      [
+        changes,
+        commitlint,
+        lint-typecheck-api,
+        unit-tests-api,
+        lint-typecheck-mobile,
+        dependency-audit,
+      ]
+    if: always()
+    steps:
+      - name: Verifica se algum job obrigatório falhou
+        run: |
+          echo "Resultados: ${{ toJSON(needs.*.result) }}"
+          if [[ "${{ contains(needs.*.result, 'failure') }}" == "true" ]]; then
+            echo "Um ou mais checks obrigatórios falharam."
+            exit 1
+          fi
+          echo "Todos os checks obrigatórios passaram (ou foram pulados por não se aplicarem a este PR)."
