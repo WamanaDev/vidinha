@@ -1,7 +1,6 @@
 import { NestFactory } from "@nestjs/core";
 import { ExpressAdapter } from "@nestjs/platform-express";
 import express from "express";
-import serverlessExpress from "@vendia/serverless-express";
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 // Tipo resolvido contra o TS fonte (sempre disponível, não depende de build
 // prévio); VALOR carregado do JS já compilado por `nest build` em runtime.
@@ -25,12 +24,19 @@ const AppModule = require("../dist/src/app.module").AppModule as AppModuleType;
  * Entry point de produção (Vercel Serverless Function). Ver
  * specs/backend/common/vercel-serverless-handler.md §3.
  *
- * SUPOSIÇÃO: `@vendia/serverless-express` foi escolhido como adaptador
- * Express→Lambda/Vercel (nenhuma spec fixa essa lib) — troca local a este
- * arquivo se preferirem `@codegenie/serverless-express` ou o adaptador nativo
- * do `@vercel/node`.
+ * CORREÇÃO (substitui a suposição original de usar `@vendia/serverless-
+ * express`/`@codegenie/serverless-express`): essas bibliotecas fazem a ponte
+ * Express→evento do AWS Lambda (formato de API Gateway), mas a Vercel NÃO
+ * invoca funções Node nesse formato — ela chama o handler diretamente com
+ * objetos `req`/`res` do próprio Node (extensões de `IncomingMessage`/
+ * `ServerResponse`), o mesmo contrato que `http.createServer()` espera. Usar
+ * a lib de adaptação Lambda causava `Error: Unable to determine event
+ * source based on event` em toda requisição real (confirmado via
+ * `vercel logs`). Como uma instância do Express já É um handler
+ * `(req, res) => void` válido, basta chamá-la diretamente — sem nenhuma
+ * biblioteca de ponte.
  */
-let cachedHandler: ReturnType<typeof serverlessExpress> | undefined;
+let cachedApp: express.Express | undefined;
 
 async function bootstrapServer() {
   const expressApp = express();
@@ -70,12 +76,15 @@ async function bootstrapServer() {
   nestApp.use(helmet.default());
 
   await nestApp.init();
-  return serverlessExpress({ app: expressApp });
+  return expressApp;
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-  if (!cachedHandler) {
-    cachedHandler = await bootstrapServer();
+  if (!cachedApp) {
+    cachedApp = await bootstrapServer();
   }
-  return cachedHandler(req, res);
+  cachedApp(
+    req as unknown as express.Request,
+    res as unknown as express.Response,
+  );
 }
