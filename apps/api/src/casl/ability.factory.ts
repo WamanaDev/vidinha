@@ -1,5 +1,10 @@
 import { Injectable } from "@nestjs/common";
-import { Ability, AbilityBuilder, InferSubjects } from "@casl/ability";
+import {
+  Ability,
+  AbilityBuilder,
+  InferSubjects,
+  detectSubjectType,
+} from "@casl/ability";
 import { FamilyRole } from "@prisma/client";
 import { PrismaService } from "@prisma-module/prisma.service";
 import { Action } from "./action.enum";
@@ -53,6 +58,13 @@ export class AbilityFactory {
     can(Action.Update, "SharingPermission", { ownerId: userId });
     cannot(Action.Update, "SharingPermission", { ownerId: { $ne: userId } });
 
+    // SUPOSIÇÃO: o rascunho de CASL na spec (casl-ability-factory.md §2) só
+    // cobria `Action.Read` explícito para ADMIN ("ver todas as permissões da
+    // família") — adicionamos aqui a leitura do próprio dono, já que um MEMBER
+    // precisa poder ver (e então editar) as próprias `SharingPermission` pelo
+    // app, o que a spec não pretendia impedir.
+    can(Action.Read, "SharingPermission", { ownerId: userId });
+
     // Regra 2 — ADMIN pode remover qualquer membro, exceto a si mesmo se for o único
     // admin (checagem de contagem agregada fica no service, não é expressável como
     // atributo estático da instância — ver modules/family/family.service.ts).
@@ -78,8 +90,15 @@ export class AbilityFactory {
     // Por ora, apenas o dono tem qualquer permissão sobre `OpenFinanceConnection`.
     can(Action.Manage, "OpenFinanceConnection", { userId });
 
+    // SUPOSIÇÃO: usamos o `detectSubjectType` padrão exportado por
+    // `@casl/ability` (em vez de `item.constructor.name` puro) porque ele
+    // respeita a marcação feita por `subject('SharingPermission', instance)`
+    // (usada em sharing-permissions.service.ts para checagens por instância
+    // via `ForbiddenError.from(ability).throwUnlessCan(...)`) antes de cair
+    // no fallback de `constructor.name` — sem isso, objetos simples vindos do
+    // Prisma (constructor `Object`) nunca seriam corretamente identificados.
     return build({
-      detectSubjectType: (item: any) => item.constructor.name as Subjects,
+      detectSubjectType: (item: any) => detectSubjectType(item) as Subjects,
     });
   }
 }
