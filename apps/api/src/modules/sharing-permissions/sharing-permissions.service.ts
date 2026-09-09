@@ -4,6 +4,7 @@ import {
   Prisma,
   FamilyRole,
   AuditAction,
+  SharableResourceType,
   SharingPermission as PrismaSharingPermission,
   User as PrismaUser,
   Family as PrismaFamily,
@@ -166,6 +167,135 @@ export class SharingPermissionsService {
     });
 
     return this.toEntity(updated as SharingPermissionWithRelations);
+  }
+
+  /**
+   * Busca as `SharingPermission` ativas (`revokedAt: null`) de uma família
+   * para um conjunto de recursos de um mesmo `resourceType`, indexadas por
+   * `resourceId`. Reusado por `accounts`/`cards` (e futuramente `categories`)
+   * para resolver, em lote, a visibilidade e os campos derivados
+   * `sharedWithFamily`/`fullDetailShared` sem repetir a lógica de leitura do
+   * `SharingPermission` em cada módulo consumidor.
+   */
+  async findActiveByResourceIds(
+    familyId: string,
+    resourceType: SharableResourceType,
+    resourceIds: string[],
+  ): Promise<Map<string, PrismaSharingPermission>> {
+    if (resourceIds.length === 0) return new Map();
+
+    const permissions = await this.prisma.sharingPermission.findMany({
+      where: {
+        familyId,
+        resourceType,
+        resourceId: { in: resourceIds },
+        revokedAt: null,
+      },
+    });
+
+    return new Map(permissions.map((p) => [p.resourceId, p]));
+  }
+
+  /**
+   * Cria ou atualiza (upsert) a `SharingPermission` de um recurso (`Account`/
+   * `Card`/`Category`), pela chave única `(ownerId, familyId, resourceType,
+   * resourceId)`. Fonte única de verdade para `updateAccountSharing`/
+   * `updateCardSharing` — evita duplicar a lógica de update direta no model
+   * `Account`/`Card` (nenhum dos dois tem colunas próprias de
+   * compartilhamento, ver nota em accounts.module.md/cards.module.md).
+   *
+   * Reaplica a mesma regra de correção automática de `update()`:
+   * `allowFullDetail` nunca fica `true` quando o recurso não está
+   * compartilhado (`sharedWithFamily: false`) — corrigido silenciosamente,
+   * não rejeitado (SUPOSIÇÃO já registrada em `update()`).
+   *
+   * Reaproveita também a mesma convenção de auditoria: emite
+   * `SHARING_PERMISSION_REVOKED` especificamente na transição ativo ->
+   * revogado; qualquer outra alteração (criação, reativação, mudança de
+   * `allowFullDetail`) audita como `SHARING_PERMISSION_UPDATED`.
+   */
+  async upsertForResource(params: {
+    actorId: string;
+    ownerId: string;
+    familyId: string;
+    resourceType: SharableResourceType;
+    resourceId: string;
+    sharedWithFamily: boolean;
+    fullDetailShared?: boolean;
+  }): Promise<PrismaSharingPermission> {
+    const {
+      actorId,
+      ownerId,
+      familyId,
+      resourceType,
+      resourceId,
+      sharedWithFamily,
+    } = params;
+
+    const existing = await this.prisma.sharingPermission.findUnique({
+      where: {
+        ownerId_familyId_resourceType_resourceId: {
+          ownerId,
+          familyId,
+          resourceType,
+          resourceId,
+        },
+      },
+    });
+
+    // Um recurso sem `SharingPermission` ainda é tratado como "revogado" para
+    // fins da regra de transição de auditoria (nunca foi compartilhado).
+    const wasRevoked = existing ? existing.revokedAt !== null : true;
+
+    const requestedAllowFullDetail =
+      params.fullDetailShared !== undefined
+        ? params.fullDetailShared
+        : (existing?.allowFullDetail ?? false);
+    const allowFullDetail = sharedWithFamily ? requestedAllowFullDetail : false;
+    const revokedAt = sharedWithFamily ? null : new Date();
+
+    const updated = await this.prisma.$transaction(
+      async (tx) =>
+        tx.sharingPermission.upsert({
+          where: {
+            ownerId_familyId_resourceType_resourceId: {
+              ownerId,
+              familyId,
+              resourceType,
+              resourceId,
+            },
+          },
+          update: { revokedAt, allowFullDetail },
+          create: {
+            ownerId,
+            familyId,
+            resourceType,
+            resourceId,
+            revokedAt,
+            allowFullDetail,
+          },
+        }),
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+    );
+
+    const isNowRevoked = updated.revokedAt !== null;
+    await this.auditLog.record({
+      actorId,
+      familyId,
+      action:
+        !wasRevoked && isNowRevoked
+          ? AuditAction.SHARING_PERMISSION_REVOKED
+          : AuditAction.SHARING_PERMISSION_UPDATED,
+      metadata: {
+        sharingPermissionId: updated.id,
+        resourceType: updated.resourceType,
+        resourceId: updated.resourceId,
+        sharedWithFamily: updated.revokedAt === null,
+        allowFullDetail: updated.allowFullDetail,
+      },
+    });
+
+    return updated;
   }
 
   private toEntity(
