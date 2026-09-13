@@ -1,7 +1,15 @@
 import { useCallback } from "react";
 import { View, Text, StyleSheet } from "react-native";
 import { useRouter } from "expo-router";
-import { User, ShieldCheck, Download, Bell, LogOut } from "lucide-react-native";
+import {
+  User,
+  ShieldCheck,
+  Download,
+  Bell,
+  LogOut,
+  Repeat,
+  Tag,
+} from "lucide-react-native";
 import { ListItem } from "@components/ListItem";
 import { useAuth } from "@lib/authContext";
 import { useTokens } from "@config/theme";
@@ -55,6 +63,18 @@ export default function SettingsMenuScreen() {
         subtitle="Exportar ou excluir sua conta"
         leftElement={<Download color={tokens.icon.default} size={22} />}
         onPress={() => router.push("/(app)/settings/export-data")}
+      />
+      <ListItem
+        title="Despesas recorrentes"
+        subtitle="Aluguel, assinaturas e outras contas fixas"
+        leftElement={<Repeat color={tokens.icon.default} size={22} />}
+        onPress={() => router.push("/(app)/recurring-expenses")}
+      />
+      <ListItem
+        title="Categorias"
+        subtitle="Organize os gastos da família"
+        leftElement={<Tag color={tokens.icon.default} size={22} />}
+        onPress={() => router.push("/(app)/categories")}
       />
       <ListItem
         title="Sair"
