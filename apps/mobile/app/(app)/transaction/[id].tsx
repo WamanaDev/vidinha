@@ -6,14 +6,16 @@ import { Button } from "@components/Button";
 import { Card } from "@components/Card";
 import { EmptyState } from "@components/EmptyState";
 import { Skeleton } from "@components/Skeleton";
-import { TextInput } from "@components/TextInput";
 import { useTokens } from "@config/theme";
 import { type as typeScale } from "@config/theme/typography";
 import { space } from "@config/theme/spacing";
+import { useActiveFamily } from "@lib/activeFamilyContext";
 import { useMe } from "@features/settings/hooks/useMe";
 import { useTransactionDetail } from "@features/transactions/hooks/useTransactionDetail";
 import { useHideTransaction } from "@features/transactions/hooks/useHideTransaction";
 import { useUpdateTransactionCategory } from "@features/transactions/hooks/useUpdateTransactionCategory";
+import { CategoryPickerSheet } from "@features/categories/components/CategoryPickerSheet";
+import type { Category } from "@features/categories/types";
 import { mapErrorCodeToMessage } from "@lib/errorMapping";
 import type { GraphQLApiError } from "@lib/graphqlClient";
 
@@ -22,6 +24,7 @@ export default function TransactionDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
   const tokens = useTokens();
+  const { familyId } = useActiveFamily();
 
   const { data: meData, isLoading: isLoadingMe } = useMe();
   const transaction = useTransactionDetail(id);
@@ -36,14 +39,10 @@ export default function TransactionDetailScreen() {
   );
   const [hideError, setHideError] = useState<string | null>(null);
 
-  // SUPOSIÇÃO: a query `categories(familyId)` ainda não existe no SDL real
-  // (packages/graphql-schema/schema.graphql só tem `transactions`, sem
-  // catálogo de categorias exposto por Query). Um seletor de verdade exigiria
-  // essa query. Enquanto ela não existir, a troca de categoria aceita um
-  // `categoryId` via campo de texto simples — menos ideal, mas destrava a
-  // funcionalidade descrita na spec. Substituir por um seletor real assim que
-  // `categories` estiver disponível no schema.
-  const [categoryIdInput, setCategoryIdInput] = useState("");
+  // `categories(familyId)` já existe no SDL real — seletor de verdade via
+  // BottomSheet (`CategoryPickerSheet`), reaproveitado também nos formulários
+  // de despesas recorrentes.
+  const [isCategoryPickerVisible, setCategoryPickerVisible] = useState(false);
   const [categoryError, setCategoryError] = useState<string | null>(null);
 
   const handleToggleHide = useCallback(() => {
@@ -63,21 +62,23 @@ export default function TransactionDetailScreen() {
     );
   }, [transaction, optimisticHidden, hideMutation]);
 
-  const handleUpdateCategory = useCallback(() => {
-    if (!transaction || !categoryIdInput.trim()) return;
-    setCategoryError(null);
-    categoryMutation.mutate(
-      { transactionId: transaction.id, categoryId: categoryIdInput.trim() },
-      {
-        onSuccess: () => setCategoryIdInput(""),
-        onError: (err) => {
-          setCategoryError(
-            mapErrorCodeToMessage((err as GraphQLApiError)?.code),
-          );
+  const handleSelectCategory = useCallback(
+    (category: Category) => {
+      if (!transaction) return;
+      setCategoryError(null);
+      categoryMutation.mutate(
+        { transactionId: transaction.id, categoryId: category.id },
+        {
+          onError: (err) => {
+            setCategoryError(
+              mapErrorCodeToMessage((err as GraphQLApiError)?.code),
+            );
+          },
         },
-      },
-    );
-  }, [transaction, categoryIdInput, categoryMutation]);
+      );
+    },
+    [transaction, categoryMutation],
+  );
 
   if (!id) {
     return (
@@ -155,24 +156,33 @@ export default function TransactionDetailScreen() {
           Trocar categoria
         </Text>
         <View style={{ marginTop: space[3] }}>
-          <TextInput
-            label="ID da categoria"
-            value={categoryIdInput}
-            onChangeText={setCategoryIdInput}
-            placeholder="Cole o id da categoria"
-            error={categoryError ?? undefined}
-            autoCapitalize="none"
-          />
           <Button
-            label="Salvar categoria"
-            onPress={handleUpdateCategory}
+            label={transaction.category?.name ?? "Escolher categoria"}
+            onPress={() => setCategoryPickerVisible(true)}
             loading={categoryMutation.isPending}
-            disabled={!categoryIdInput.trim()}
             variant="secondary"
             fullWidth
           />
+          {categoryError ? (
+            <Text
+              style={[
+                typeScale.caption,
+                { color: tokens.state.error.fg, marginTop: space[2] },
+              ]}
+            >
+              {categoryError}
+            </Text>
+          ) : null}
         </View>
       </View>
+
+      <CategoryPickerSheet
+        isVisible={isCategoryPickerVisible}
+        onClose={() => setCategoryPickerVisible(false)}
+        familyId={familyId}
+        selectedCategoryId={transaction.category?.id}
+        onSelect={handleSelectCategory}
+      />
 
       {isOwner ? (
         <View style={{ marginTop: space[8] }}>

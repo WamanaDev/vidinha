@@ -201,3 +201,68 @@ export interface SharingPermission {
   fullDetailShared: boolean;
   updatedAt: string;
 }
+
+// --- Tipos abaixo espelham `Category`/`RecurringExpense` do SDL real
+// (packages/graphql-schema/schema.graphql, linhas ~151-211/339-373),
+// adicionados para as telas `(app)/categories/*` e `(app)/recurring-expenses/*`.
+// Mesma justificativa dos blocos acima: placeholder até o codegen real gerar
+// @vidinha/graphql-types.
+
+export interface Category {
+  id: string;
+  name: string;
+  icon?: string | null;
+  hiddenFromFamily: boolean;
+  isDefault: boolean;
+}
+
+export interface CreateCategoryInput {
+  familyId: string;
+  name: string;
+  icon?: string | null;
+}
+
+export interface UpdateCategoryInput {
+  id: string;
+  name?: string;
+  icon?: string | null;
+  hiddenFromFamily?: boolean;
+}
+
+export type RecurrenceFrequency =
+  "WEEKLY" | "MONTHLY" | "BIMONTHLY" | "QUARTERLY" | "SEMIANNUAL" | "ANNUAL";
+
+export interface RecurringExpense {
+  id: string;
+  family: FamilySummary;
+  description: string;
+  amount: number;
+  frequency: RecurrenceFrequency;
+  nextDueDate: string;
+  category?: Category | null;
+  sharedWithFamily: boolean;
+  owner: UserSummary;
+}
+
+export interface CreateRecurringExpenseInput {
+  familyId: string;
+  description: string;
+  amount: number;
+  frequency: RecurrenceFrequency;
+  dueDay: number;
+  startDate: string;
+  endDate?: string | null;
+  categoryId?: string | null;
+}
+
+export interface UpdateRecurringExpenseInput {
+  id: string;
+  description?: string;
+  amount?: number;
+  frequency?: RecurrenceFrequency;
+  dueDay?: number;
+  startDate?: string;
+  endDate?: string | null;
+  categoryId?: string | null;
+  isActive?: boolean;
+}

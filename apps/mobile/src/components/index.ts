@@ -6,3 +6,4 @@ export * from "./ErrorState";
 export * from "./Skeleton";
 export * from "./ListItem";
 export * from "./Amount";
+export * from "./BottomSheet";
