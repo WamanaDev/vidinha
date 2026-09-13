@@ -26,6 +26,7 @@ import { OpenFinanceResolver } from "../src/modules/open-finance/open-finance.re
 import { SharingPermissionsResolver } from "../src/modules/sharing-permissions/sharing-permissions.resolver";
 import { AccountsResolver } from "../src/modules/accounts/accounts.resolver";
 import { CardsResolver } from "../src/modules/cards/cards.resolver";
+import { TransactionsResolver } from "../src/modules/transactions/transactions.resolver";
 
 async function generate() {
   const app = await NestFactory.create(GraphQLSchemaBuilderModule);
@@ -39,6 +40,7 @@ async function generate() {
     SharingPermissionsResolver,
     AccountsResolver,
     CardsResolver,
+    TransactionsResolver,
   ]);
 
   const outPath = resolve(
