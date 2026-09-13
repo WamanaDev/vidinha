@@ -25,6 +25,11 @@ export interface TransactionNode {
   category?: { id: string; name: string; icon: string } | null;
   account?: { id: string; name: string } | null;
   card?: { id: string; name: string } | null;
+  // owner: SDL real (packages/graphql-schema/schema.graphql) tem
+  // `Transaction.owner: User!`, adicionado aqui para a tela de detalhe
+  // (apps/mobile/app/(app)/transaction/[id].tsx) decidir se a ação de ocultar
+  // deve ficar visível/habilitada (só o dono pode ocultar).
+  owner: { id: string; displayName?: string | null };
 }
 
 export interface TransactionEdge {
