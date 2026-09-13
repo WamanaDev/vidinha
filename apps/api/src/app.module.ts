@@ -26,6 +26,8 @@ import { SharingPermissionsModule } from "@modules/sharing-permissions/sharing-p
 import { AccountsModule } from "@modules/accounts/accounts.module";
 import { CardsModule } from "@modules/cards/cards.module";
 import { TransactionsModule } from "@modules/transactions/transactions.module";
+import { RecurringExpensesModule } from "@modules/recurring-expenses/recurring-expenses.module";
+import { CategoriesModule } from "@modules/categories/categories.module";
 
 @Module({
   imports: [
@@ -57,10 +59,8 @@ import { TransactionsModule } from "@modules/transactions/transactions.module";
     AccountsModule,
     CardsModule,
     TransactionsModule,
-    // SUPOSIÇÃO: recurring-expenses e categories (CRUD) ainda não foram
-    // implementados neste bootstrap (fora do escopo desta tarefa — ver
-    // specs/backend/00-overview.md §3, passos 8-9). Serão importados aqui à
-    // medida que forem implementados.
+    RecurringExpensesModule,
+    CategoriesModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: GqlThrottlerGuard },

@@ -607,6 +607,7 @@ export class TransactionsService {
       name: category.name,
       icon: category.icon ?? undefined,
       hiddenFromFamily: categoryHiddenMap.get(category.id) ?? false,
+      isDefault: category.ownerId === null,
     };
   }
 }
