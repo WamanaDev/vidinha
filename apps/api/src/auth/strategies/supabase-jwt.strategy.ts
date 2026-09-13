@@ -38,7 +38,12 @@ export class SupabaseJwtStrategy extends PassportStrategy(
           config.get<string>("SUPABASE_JWKS_URL") ??
           `${supabaseUrl}/auth/v1/.well-known/jwks.json`,
       }),
-      algorithms: ["RS256"],
+      // Supabase pode assinar com RS256 ou ES256 dependendo de como as
+      // "JWT Signing Keys" do projeto foram geradas (ver
+      // GET <SUPABASE_URL>/auth/v1/.well-known/jwks.json — campo "alg" de
+      // cada chave). Aceitar ambos evita reconfiguração manual se o projeto
+      // rotacionar/mudar o tipo de chave.
+      algorithms: ["RS256", "ES256"],
       issuer: `${supabaseUrl}/auth/v1`,
       audience: "authenticated",
       ignoreExpiration: false,
