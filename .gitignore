@@ -11,6 +11,12 @@ build/
 *.tsbuildinfo
 web-build/
 
+# Pastas nativas geradas por `expo prebuild`/`expo run:android`/`expo run:ios`
+# (regeneráveis a qualquer momento; podem conter caminhos específicos da
+# máquina e não devem ser versionadas em um projeto Expo managed).
+apps/mobile/android/
+apps/mobile/ios/
+
 # Env files (nunca commitar segredos)
 .env
 .env.*
