@@ -1,6 +1,7 @@
 import { useCallback } from "react";
 import { FlatList, StyleSheet, View } from "react-native";
 import { useRouter } from "expo-router";
+import { Button } from "@components/Button";
 import { Skeleton } from "@components/Skeleton";
 import { EmptyState } from "@components/EmptyState";
 import { ErrorState } from "@components/ErrorState";
@@ -32,6 +33,10 @@ export default function AccountsScreen() {
 
   const handleConnect = useCallback(() => {
     router.push("/open-finance/connect");
+  }, [router]);
+
+  const handleManageConnections = useCallback(() => {
+    router.push("/open-finance/connections");
   }, [router]);
 
   const renderItem = useCallback(
@@ -89,6 +94,16 @@ export default function AccountsScreen() {
       data={accounts}
       keyExtractor={keyExtractor}
       renderItem={renderItem}
+      ListHeaderComponent={
+        <View style={{ padding: space[4], paddingBottom: 0 }}>
+          <Button
+            label="Gerenciar conexões Open Finance"
+            variant="ghost"
+            size="sm"
+            onPress={handleManageConnections}
+          />
+        </View>
+      }
       // claude.md §16.1 — evita renderizar tudo simultaneamente.
       windowSize={7}
       maxToRenderPerBatch={10}
