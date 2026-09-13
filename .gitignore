@@ -8,6 +8,7 @@ build/
 .next/
 .expo/
 .expo-shared/
+*.tsbuildinfo
 web-build/
 
 # Env files (nunca commitar segredos)

@@ -1,0 +1,48 @@
+// specs/design/tokens/colors.md §1 — paleta bruta. NUNCA usar direto em componente.
+export const palette = {
+  terracota: {
+    50: "#FBF0EC",
+    100: "#F6DDD4",
+    300: "#E09B85",
+    500: "#C9553D",
+    600: "#B04530",
+    700: "#8F3626",
+    900: "#54211A",
+  },
+  manjericao: { 50: "#EEF3EF", 300: "#8FB39C", 600: "#2F6B4F", 800: "#1D4433" },
+  manteiga: { 100: "#FDF3DC", 400: "#F2B441", 700: "#8A5F10" },
+  neutro: {
+    leite: "#FAF7F2",
+    papel: "#FFFFFF",
+    areia100: "#F2EBE1",
+    areia200: "#E5DCD0",
+    areia400: "#BCB0A2",
+    cha600: "#6E635C",
+    grafite800: "#3A312C",
+    grafite900: "#241E1A",
+  },
+  semantico: {
+    positivo: "#2F6B4F",
+    atencao: "#B77A16",
+    erro: "#B3261E",
+    info: "#3A6B8A",
+    saida: "#3A312C",
+  },
+  dark: {
+    fundo: "#191512",
+    superficie: "#241F1B",
+    superficie2: "#2F2925",
+    borda: "#3D352F",
+    texto: "#F2EBE3",
+    textoSecundario: "#B0A498",
+    terracota: "#E58A70",
+    manjericao: "#7FBF9C",
+    erro: "#F2B8B5",
+  },
+  derivado: {
+    erro50: "#F7E6E4",
+    erro900: "#5C1512",
+    info50: "#E8EEF2",
+    info300: "#8FB6CE",
+  },
+} as const;
