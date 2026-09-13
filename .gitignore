@@ -57,3 +57,7 @@ credentials.json
 .claude/*.lock
 .claude/sessions/
 .claude/settings.local.json
+
+# Config local de pnpm (específica de máquina/drive — ver nota no README,
+# seção "Rodando o app mobile localmente").
+.npmrc
