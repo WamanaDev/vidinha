@@ -31,6 +31,22 @@ cp apps/mobile/.env.example apps/mobile/.env
 
 Preencha os `.env` com credenciais reais (Supabase, Pluggy, Sentry) — nunca commitadas. Ver [`specs/infra/environments.md`](specs/infra/environments.md) e [`specs/infra/secrets-management.md`](specs/infra/secrets-management.md).
 
+### Rodando o app mobile localmente (Android via adb)
+
+```bash
+cd apps/mobile
+pnpm exec expo run:android   # build nativo local + instala via adb, sem precisar de conta EAS
+```
+
+**No Windows**, esse build nativo pode falhar com `Filename longer than 260 characters` — o `ninja.exe` do Android SDK não respeita o `LongPathsEnabled` do Windows, mesmo com o registro configurado. Se isso acontecer, encurte o local onde o pnpm guarda os pacotes criando um `.npmrc` **local** (não versionado — o caminho é específico da sua máquina/drive) na raiz do repositório:
+
+```ini
+# .npmrc (não commitar — mantenha na mesma unidade/drive do projeto)
+virtual-store-dir=E:/.pnpm-vidinha
+```
+
+Depois rode `pnpm install` de novo (ele vai perguntar antes de realocar os pacotes) e tente o build novamente.
+
 ## Convenções
 
 - Commits: [Conventional Commits](specs/infra/git-workflow.md#4-commits-conventional-commits-obrigatório-validado-em-ci), validados por Husky.
