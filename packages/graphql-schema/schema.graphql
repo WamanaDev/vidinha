@@ -148,6 +148,46 @@ type Card implements Node {
   owner: User!
 }
 
+type Category implements Node {
+  id: ID!
+  name: String!
+  icon: String
+  hiddenFromFamily: Boolean!
+}
+
+type Transaction implements Node {
+  id: ID!
+  description: String!
+  amount: Float!
+  date: DateTime!
+  account: Account
+  card: Card
+  category: Category
+  hiddenFromFamily: Boolean!
+  owner: User!
+}
+
+type PageInfo {
+  hasNextPage: Boolean!
+  hasPreviousPage: Boolean!
+  startCursor: String
+  endCursor: String
+}
+
+type TransactionEdge {
+  cursor: Cursor!
+  node: Transaction!
+}
+
+"""Cursor opaco (base64) para paginação estilo Relay."""
+scalar Cursor
+
+type TransactionConnection {
+  edges: [TransactionEdge!]!
+  pageInfo: PageInfo!
+  totalCount: Int!
+}
+
 type Query {
   me: User!
   family(id: ID!): Family!
@@ -157,6 +197,33 @@ type Query {
   sharingPermissions(familyId: ID!): [SharingPermission!]!
   accounts(familyId: ID!): [Account!]!
   cards(familyId: ID!): [Card!]!
+  transactions(filter: TransactionFilterInput!, orderBy: TransactionOrderInput, first: Int, after: Cursor): TransactionConnection!
+}
+
+input TransactionFilterInput {
+  familyId: ID!
+  accountId: ID
+  cardId: ID
+  categoryId: ID
+  fromDate: DateTime
+  toDate: DateTime
+  minAmount: Float
+  maxAmount: Float
+}
+
+input TransactionOrderInput {
+  field: TransactionOrderField!
+  direction: OrderDirection!
+}
+
+enum TransactionOrderField {
+  DATE
+  AMOUNT
+}
+
+enum OrderDirection {
+  ASC
+  DESC
 }
 
 type Mutation {
@@ -176,6 +243,8 @@ type Mutation {
   updateSharingPermission(input: UpdateSharingPermissionInput!): SharingPermission!
   updateAccountSharing(input: UpdateAccountSharingInput!): Account!
   updateCardSharing(input: UpdateCardSharingInput!): Card!
+  hideTransaction(input: HideTransactionInput!): Transaction!
+  updateTransactionCategory(input: UpdateTransactionCategoryInput!): Transaction!
 }
 
 input CompleteProfileInput {
@@ -225,4 +294,14 @@ input UpdateAccountSharingInput {
 input UpdateCardSharingInput {
   cardId: ID!
   sharedWithFamily: Boolean!
+}
+
+input HideTransactionInput {
+  transactionId: ID!
+  hiddenFromFamily: Boolean!
+}
+
+input UpdateTransactionCategoryInput {
+  transactionId: ID!
+  categoryId: ID!
 }
