@@ -1,16 +1,21 @@
 import { useQuery } from "@tanstack/react-query";
 import { fetchCards } from "@features/cards/services/cards.graphql";
 
-/**
- * Sempre resolve para uma lista vazia hoje — ver SUPOSIÇÃO em
- * `services/cards.graphql.ts`: o backend real ainda não tem nenhum dado de
- * cartão. Mantido como hook (em vez de constante) para a tela já ficar
- * pronta para consumir dado real assim que o backend expuser a query.
- */
+// Busca `cards(familyId)` (query real do SDL).
 export function useCards(familyId: string) {
   return useQuery({
     queryKey: ["cards", familyId],
     queryFn: () => fetchCards({ familyId }),
     enabled: Boolean(familyId),
   });
+}
+
+/** Deriva um único cartão da lista já buscada — não há query singular
+ * `card(id)` no SDL real (só a lista `cards(familyId)`). */
+export function findCardById<T extends { id: string }>(
+  cards: T[] | undefined,
+  id: string | undefined,
+): T | undefined {
+  if (!id || !cards) return undefined;
+  return cards.find((card) => card.id === id);
 }

@@ -1,21 +1,33 @@
-import type { CardSummary } from "@features/cards/types";
+import { graphqlRequest } from "@lib/graphqlClient";
+import type { Card } from "@app-types/graphql-generated";
 
-// SUPOSIÇÃO IMPORTANTE: diferente de `accounts`, o backend real hoje não
-// expõe absolutamente nenhum dado de cartão — não existe `type Card`, nem
-// `cards(familyId: ID!)`, nem um `AccountType` de cartão dentro de `Account`
-// (packages/graphql-schema/schema.graphql só tem CHECKING/SAVINGS/INVESTMENT/
-// OTHER). specs/mobile/routes/tabs/cards.md descreve `cards(familyId: ID!)`,
-// mas essa query não existe no SDL implementado — está um passo à frente do
-// backend real.
-//
-// Para não inventar dado nem query inexistente, esta função sempre resolve
-// para uma lista vazia: a tela `(tabs)/cards.tsx` sempre renderiza o estado
-// `empty` (com uma mensagem explicando que cartões chegam em breve), nunca
-// `loading`/`error` de verdade. Quando o backend adicionar suporte a cartão
-// (novo type + query dedicada), substituir esta função por uma chamada real
-// via `graphqlRequest`, seguindo o mesmo padrão de `accounts.graphql.ts`.
-export async function fetchCards(_variables: {
+// Query `cards(familyId: ID!): [Card!]!` — SDL real,
+// packages/graphql-schema/schema.graphql.
+const CARDS_QUERY = /* GraphQL */ `
+  query CardsForFamily($familyId: ID!) {
+    cards(familyId: $familyId) {
+      id
+      name
+      lastFourDigits
+      limit
+      currentInvoice
+      dueDate
+      sharedWithFamily
+      owner {
+        id
+      }
+    }
+  }
+`;
+
+interface CardsVariables {
   familyId: string;
-}): Promise<{ cards: CardSummary[] }> {
-  return { cards: [] };
+}
+
+interface CardsResult {
+  cards: Card[];
+}
+
+export function fetchCards(variables: CardsVariables) {
+  return graphqlRequest<CardsResult, CardsVariables>(CARDS_QUERY, variables);
 }
