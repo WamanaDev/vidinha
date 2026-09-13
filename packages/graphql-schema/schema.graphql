@@ -153,6 +153,7 @@ type Category implements Node {
   name: String!
   icon: String
   hiddenFromFamily: Boolean!
+  isDefault: Boolean!
 }
 
 type Transaction implements Node {
@@ -188,6 +189,27 @@ type TransactionConnection {
   totalCount: Int!
 }
 
+type RecurringExpense implements Node {
+  id: ID!
+  family: Family!
+  description: String!
+  amount: Float!
+  frequency: RecurrenceFrequency!
+  nextDueDate: DateTime!
+  category: Category
+  sharedWithFamily: Boolean!
+  owner: User!
+}
+
+enum RecurrenceFrequency {
+  WEEKLY
+  MONTHLY
+  BIMONTHLY
+  QUARTERLY
+  SEMIANNUAL
+  ANNUAL
+}
+
 type Query {
   me: User!
   family(id: ID!): Family!
@@ -198,6 +220,8 @@ type Query {
   accounts(familyId: ID!): [Account!]!
   cards(familyId: ID!): [Card!]!
   transactions(filter: TransactionFilterInput!, orderBy: TransactionOrderInput, first: Int, after: Cursor): TransactionConnection!
+  recurringExpenses(familyId: ID!): [RecurringExpense!]!
+  categories(familyId: ID!): [Category!]!
 }
 
 input TransactionFilterInput {
@@ -245,6 +269,12 @@ type Mutation {
   updateCardSharing(input: UpdateCardSharingInput!): Card!
   hideTransaction(input: HideTransactionInput!): Transaction!
   updateTransactionCategory(input: UpdateTransactionCategoryInput!): Transaction!
+  createRecurringExpense(input: CreateRecurringExpenseInput!): RecurringExpense!
+  updateRecurringExpense(input: UpdateRecurringExpenseInput!): RecurringExpense!
+  deleteRecurringExpense(id: ID!): Boolean!
+  createCategory(input: CreateCategoryInput!): Category!
+  updateCategory(input: UpdateCategoryInput!): Category!
+  deleteCategory(id: ID!): Boolean!
 }
 
 input CompleteProfileInput {
@@ -304,4 +334,40 @@ input HideTransactionInput {
 input UpdateTransactionCategoryInput {
   transactionId: ID!
   categoryId: ID!
+}
+
+input CreateRecurringExpenseInput {
+  familyId: ID!
+  description: String!
+  amount: Float!
+  frequency: RecurrenceFrequency!
+  dueDay: Int!
+  startDate: DateTime!
+  endDate: DateTime
+  categoryId: ID
+}
+
+input UpdateRecurringExpenseInput {
+  id: ID!
+  description: String
+  amount: Float
+  frequency: RecurrenceFrequency
+  dueDay: Int
+  startDate: DateTime
+  endDate: DateTime
+  categoryId: ID
+  isActive: Boolean
+}
+
+input CreateCategoryInput {
+  familyId: ID!
+  name: String!
+  icon: String
+}
+
+input UpdateCategoryInput {
+  id: ID!
+  name: String
+  icon: String
+  hiddenFromFamily: Boolean
 }
