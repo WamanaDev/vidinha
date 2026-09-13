@@ -4,7 +4,6 @@ import { useRouter } from "expo-router";
 import { Skeleton } from "@components/Skeleton";
 import { ErrorState } from "@components/ErrorState";
 import { EmptyState } from "@components/EmptyState";
-import { Button } from "@components/Button";
 import { useActiveFamily } from "@lib/activeFamilyContext";
 import { useFamily } from "@features/family/hooks/useFamily";
 import { MemberListItem } from "@features/family/components/MemberListItem";
@@ -41,16 +40,6 @@ export default function FamilyMembersScreen() {
   );
 
   const keyExtractor = useCallback((item: FamilyMembership) => item.id, []);
-
-  // SUPOSIÇÃO: entrada temporária de desenvolvimento para a tela
-  // `sharing/account/[id]` — as telas de Contas/Cartões (onde esse link
-  // deveria realmente aparecer) ainda não existem, pois os módulos
-  // `accounts`/`cards` do backend estão sendo implementados em paralelo.
-  // Remover assim que a tela de Contas ganhar seu próprio ponto de entrada
-  // para "Configurar compartilhamento".
-  const handleOpenSharingDevEntry = useCallback(() => {
-    router.push("/sharing/account/dev-preview");
-  }, [router]);
 
   if (isLoading) {
     return (
@@ -101,16 +90,6 @@ export default function FamilyMembersScreen() {
         initialNumToRender={10}
         removeClippedSubviews
       />
-      {__DEV__ ? (
-        <View style={{ padding: space[4] }}>
-          <Button
-            label="Testar tela de compartilhamento (dev)"
-            onPress={handleOpenSharingDevEntry}
-            variant="ghost"
-            fullWidth
-          />
-        </View>
-      ) : null}
     </View>
   );
 }
