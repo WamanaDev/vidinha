@@ -23,6 +23,9 @@ import { FamilyModule } from "@modules/family/family.module";
 import { AuditLogModule } from "@modules/audit-log/audit-log.module";
 import { OpenFinanceModule } from "@modules/open-finance/open-finance.module";
 import { SharingPermissionsModule } from "@modules/sharing-permissions/sharing-permissions.module";
+import { AccountsModule } from "@modules/accounts/accounts.module";
+import { CardsModule } from "@modules/cards/cards.module";
+import { TransactionsModule } from "@modules/transactions/transactions.module";
 
 @Module({
   imports: [
@@ -51,10 +54,13 @@ import { SharingPermissionsModule } from "@modules/sharing-permissions/sharing-p
     FamilyModule,
     OpenFinanceModule,
     SharingPermissionsModule,
-    // SUPOSIÇÃO: accounts, cards, transactions, recurring-expenses e categories
-    // ainda não foram implementados neste bootstrap (fora do escopo desta
-    // tarefa — ver specs/backend/00-overview.md §3, passos 5, 7-9). Serão
-    // importados aqui à medida que forem implementados.
+    AccountsModule,
+    CardsModule,
+    TransactionsModule,
+    // SUPOSIÇÃO: recurring-expenses e categories (CRUD) ainda não foram
+    // implementados neste bootstrap (fora do escopo desta tarefa — ver
+    // specs/backend/00-overview.md §3, passos 8-9). Serão importados aqui à
+    // medida que forem implementados.
   ],
   providers: [
     { provide: APP_GUARD, useClass: GqlThrottlerGuard },

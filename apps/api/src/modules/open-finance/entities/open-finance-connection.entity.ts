@@ -1,6 +1,6 @@
 import { ObjectType, Field, ID, registerEnumType } from "@nestjs/graphql";
 import { ConnectionStatus } from "@prisma/client";
-import { AccountEntity } from "./account.entity";
+import { Account } from "@modules/accounts/entities/account.entity";
 
 // SUPOSIÇÃO: o enum GraphQL espelha 1:1 o `ConnectionStatus` do Prisma
 // (CONNECTED, UPDATING, LOGIN_ERROR, OUTDATED, ERROR, REVOKED), que é a fonte
@@ -31,6 +31,6 @@ export class OpenFinanceConnection {
   @Field()
   createdAt!: Date;
 
-  @Field(() => [AccountEntity])
-  accounts!: AccountEntity[];
+  @Field(() => [Account])
+  accounts!: Account[];
 }
