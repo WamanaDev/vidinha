@@ -99,13 +99,19 @@ export interface FamilyPayload {
 
 export type AccountType = "CHECKING" | "SAVINGS" | "INVESTMENT" | "OTHER";
 
+// `type Account` — SDL real, packages/graphql-schema/schema.graphql. Não tem
+// `maskedNumber` (campo removido — a versão anterior deste arquivo assumia um
+// SDL diferente do implementado).
 export interface Account {
   id: string;
   type: AccountType;
   name: string;
-  maskedNumber?: string | null;
   currency: string;
   balance: number;
+  connection?: OpenFinanceConnection | null;
+  sharedWithFamily: boolean;
+  fullDetailShared: boolean;
+  owner: Pick<User, "id">;
 }
 
 export type ConnectionStatus =
@@ -119,6 +125,19 @@ export interface OpenFinanceConnection {
   lastSyncedAt?: string | null;
   createdAt: string;
   accounts: Account[];
+}
+
+// `type Card` — SDL real, packages/graphql-schema/schema.graphql. Query
+// `cards(familyId: ID!): [Card!]!`.
+export interface Card {
+  id: string;
+  name: string;
+  lastFourDigits?: string | null;
+  limit?: number | null;
+  currentInvoice?: number | null;
+  dueDate?: string | null;
+  sharedWithFamily: boolean;
+  owner: Pick<User, "id">;
 }
 
 // `pluggyConnectToken` (Query) — SDL real, packages/graphql-schema/schema.graphql.

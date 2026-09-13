@@ -17,7 +17,7 @@ function AccountListItemBase({ account, onPress }: AccountListItemProps) {
   return (
     <ListItem
       title={account.name}
-      subtitle={`${account.institutionName}${account.maskedNumber ? ` · ${account.maskedNumber}` : ""}`}
+      subtitle={account.institutionName}
       onPress={onPress}
       rightElement={<Amount value={account.balance} variant="compact" />}
     />
