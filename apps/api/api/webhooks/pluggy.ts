@@ -31,17 +31,18 @@ const OpenFinanceService =
  * { "event": "item/updated" | "item/created" | "item/error", "eventId": "...", "itemId": "...", "error"?: {...} }
  * ```
  *
- * A doc do Pluggy exige responder 2XX em até 5s — nenhum trabalho pesado
- * (buscar contas/transações) roda de forma síncrona antes do `res.json`: a
- * validação do secret é a única coisa aguardada antes de responder;
- * `processEvent(...)` é disparada intencionalmente sem `await` (fire-and-forget).
- * SUPOSIÇÃO: como funções serverless da Vercel podem ser encerradas logo após
- * a resposta ser enviada (sem garantia de execução em segundo plano), o
- * processamento disparado aqui é best-effort — se o container for reciclado
- * antes de `processEvent` terminar, a atualização de status fica pendente até
- * o próximo evento de webhook, o próximo `syncOpenFinanceConnection` manual do
- * usuário, ou o job diário de reconciliação (fora do escopo deste módulo).
- * Não há fila configurada no MVP para garantir a execução completa.
+ * A doc do Pluggy exige responder 2XX em até 5s. Versão anterior respondia
+ * 200 IMEDIATAMENTE e disparava `processEvent(...)` sem `await`
+ * (fire-and-forget) — na prática, a Vercel encerra a função logo após
+ * `res.json()` retornar (não há garantia nenhuma de execução em segundo
+ * plano depois da resposta), então o processamento (buscar item atualizado
+ * na Pluggy + gravar no Postgres) quase nunca chegava a rodar de verdade: a
+ * conexão ficava presa em "UPDATING" indefinidamente, mesmo com o item já
+ * `SUCCESS` do lado da Pluggy. Confirmado em produção (nenhum log de
+ * `processEvent` aparecia após o webhook responder). Agora `processEvent` é
+ * aguardado (`await`) antes de responder — o trabalho real (uma chamada
+ * `GET /items/{id}` + um `UPDATE` no Postgres) é rápido o suficiente pra
+ * caber dentro dos 5s exigidos pelo Pluggy.
  *
  * CADASTRO DO WEBHOOK (passo manual único, feito via API do Pluggy — não dá
  * para configurar o header customizado pelo Dashboard):
@@ -163,11 +164,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   const body = req.body as PluggyWebhookPayload | undefined;
 
-  // Responde imediatamente (requisito do Pluggy: 2XX em até 5s) e só então
-  // dispara o processamento — sem `await`, propositalmente fire-and-forget.
-  res.status(200).json({ received: true });
-
+  // Aguarda o processamento terminar antes de responder — ver justificativa
+  // no comentário de topo do arquivo. `processEvent` nunca lança (try/catch
+  // interno), então isso não atrasa a resposta além do tempo real de
+  // trabalho, nem arrisca responder com erro por uma falha do nosso lado.
   if (body) {
-    void processEvent(body);
+    await processEvent(body);
   }
+
+  res.status(200).json({ received: true });
 }
