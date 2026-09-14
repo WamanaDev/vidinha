@@ -50,13 +50,23 @@ export class OpenFinanceService {
       countries: ["BR"],
       sandbox: includeSandbox,
     });
+    // Defensivo: o OpenAPI da Pluggy só declara `id` como obrigatório no
+    // `Connector` — todo o resto (inclusive `name`/`type`/`country`/
+    // `hasMFA`/`oauth`/`isOpenFinance`/`isSandbox`) pode legitimamente vir
+    // ausente. Nosso schema GraphQL declara a maioria desses campos como
+    // `!` (não nulo) para simplificar o app — já vimos em produção um
+    // conector real sem `oauth`, o que quebrava a serialização da LISTA
+    // INTEIRA com "Cannot return null for non-nullable field" (erro mascarado
+    // como INTERNAL_ERROR genérico no client). Aplicamos fallback em todos os
+    // campos não-opcionais do tipo para não repetir esse apagão a cada campo
+    // novo que a Pluggy decidir omitir.
     return connectors.map((c) => ({
       id: c.id,
-      name: c.name,
+      name: c.name ?? `Instituição ${c.id}`,
       imageUrl: c.imageUrl,
       primaryColor: c.primaryColor,
-      type: c.type,
-      country: c.country,
+      type: c.type ?? "OTHER",
+      country: c.country ?? "BR",
       credentials: c.credentials.map((cred) => ({
         name: cred.name,
         label: cred.label,
@@ -68,12 +78,12 @@ export class OpenFinanceService {
         instructions: cred.instructions,
         options: cred.options,
       })),
-      hasMFA: c.hasMFA,
-      oauth: c.oauth,
+      hasMFA: c.hasMFA ?? false,
+      oauth: c.oauth ?? false,
       oauthUrl: c.oauthUrl,
       health: c.health ? { status: c.health.status } : undefined,
-      isOpenFinance: c.isOpenFinance,
-      isSandbox: c.isSandbox,
+      isOpenFinance: c.isOpenFinance ?? false,
+      isSandbox: c.isSandbox ?? false,
     }));
   }
 
