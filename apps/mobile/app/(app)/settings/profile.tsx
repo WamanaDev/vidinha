@@ -1,12 +1,19 @@
 import { useCallback, useEffect, useState } from "react";
-import { View, Text, StyleSheet } from "react-native";
+import { View, Text, StyleSheet, Alert, Pressable } from "react-native";
 import { useRouter } from "expo-router";
 import { Button } from "@components/Button";
 import { TextInput } from "@components/TextInput";
 import { Skeleton } from "@components/Skeleton";
 import { ErrorState } from "@components/ErrorState";
+import { Avatar } from "@components/Avatar";
 import { useMe } from "@features/settings/hooks/useMe";
-import { useCompleteUserProfile } from "@features/settings/hooks/useSettingsActions";
+import {
+  useCompleteUserProfile,
+  useUploadAvatar,
+} from "@features/settings/hooks/useSettingsActions";
+import { AvatarValidationError } from "@features/settings/lib/avatarUpload";
+import { getInitials } from "@lib/avatarInitials";
+import { useCachedAvatarUri } from "@lib/useCachedAvatarUri";
 import { mapErrorCodeToMessage } from "@lib/errorMapping";
 import type { GraphQLApiError } from "@lib/graphqlClient";
 import { useTokens } from "@config/theme";
@@ -24,17 +31,22 @@ export default function ProfileScreen() {
     isPending,
     error: mutationError,
   } = useCompleteUserProfile();
+  const {
+    mutate: uploadAvatar,
+    isPending: isUploadingAvatar,
+    error: avatarError,
+  } = useUploadAvatar();
 
   const [displayName, setDisplayName] = useState("");
-  const [avatarUrl, setAvatarUrl] = useState("");
   const [saved, setSaved] = useState(false);
 
   useEffect(() => {
     if (data?.me) {
       setDisplayName(data.me.displayName ?? "");
-      setAvatarUrl(data.me.avatarUrl ?? "");
     }
   }, [data?.me]);
+
+  const cachedAvatarUri = useCachedAvatarUri(data?.me.id, data?.me.avatarUrl);
 
   const handleSave = useCallback(async () => {
     if (!displayName.trim()) {
@@ -42,15 +54,38 @@ export default function ProfileScreen() {
     }
     setSaved(false);
     try {
-      await mutateAsync({
-        displayName: displayName.trim(),
-        avatarUrl: avatarUrl.trim() || null,
-      });
+      await mutateAsync({ displayName: displayName.trim() });
       setSaved(true);
     } catch {
       // erro já exposto via `mutationError` abaixo
     }
-  }, [avatarUrl, displayName, mutateAsync]);
+  }, [displayName, mutateAsync]);
+
+  const handlePickAvatar = useCallback(() => {
+    if (!data?.me) return;
+    const userId = data.me.id;
+    const currentDisplayName = displayName.trim() || data.me.displayName || "";
+
+    const pick = (source: "library" | "camera") => {
+      uploadAvatar(
+        { source, displayName: currentDisplayName, userId },
+        {
+          onError: (err) => {
+            if (err instanceof AvatarValidationError) {
+              Alert.alert("Não foi possível usar essa foto", err.message);
+            }
+            // Erros de rede/servidor já aparecem via `avatarError` abaixo.
+          },
+        },
+      );
+    };
+
+    Alert.alert("Foto de perfil", "Escolha de onde pegar a foto", [
+      { text: "Cancelar", style: "cancel" },
+      { text: "Câmera", onPress: () => pick("camera") },
+      { text: "Galeria", onPress: () => pick("library") },
+    ]);
+  }, [data?.me, displayName, uploadAvatar]);
 
   if (isLoading) {
     return (
@@ -86,12 +121,56 @@ export default function ProfileScreen() {
           {
             color: tokens.text.secondary,
             marginTop: space[2],
-            marginBottom: space[6],
+            marginBottom: space[5],
           },
         ]}
       >
         {data.me.email}
       </Text>
+
+      <Pressable
+        onPress={handlePickAvatar}
+        disabled={isUploadingAvatar}
+        accessibilityRole="button"
+        accessibilityLabel="Trocar foto de perfil"
+        style={{
+          alignSelf: "center",
+          marginBottom: space[2],
+          opacity: isUploadingAvatar ? 0.5 : 1,
+        }}
+      >
+        <Avatar
+          uri={cachedAvatarUri}
+          fallbackInitials={getInitials(displayName || data.me.email)}
+          size="lg"
+        />
+      </Pressable>
+      <Text
+        style={[
+          typeScale.caption,
+          {
+            color: tokens.text.secondary,
+            textAlign: "center",
+            marginBottom: space[6],
+          },
+        ]}
+      >
+        {isUploadingAvatar ? "Enviando foto…" : "Toque para trocar a foto"}
+      </Text>
+      {avatarError && !(avatarError instanceof AvatarValidationError) ? (
+        <Text
+          style={[
+            typeScale.caption,
+            {
+              color: tokens.state.error.fg,
+              textAlign: "center",
+              marginBottom: space[4],
+            },
+          ]}
+        >
+          Não foi possível enviar a foto. Tente novamente.
+        </Text>
+      ) : null}
 
       <TextInput
         label="Nome"
@@ -104,13 +183,6 @@ export default function ProfileScreen() {
             ? mapErrorCodeToMessage((mutationError as GraphQLApiError).code)
             : undefined
         }
-      />
-      <TextInput
-        label="URL da foto (opcional)"
-        value={avatarUrl}
-        onChangeText={setAvatarUrl}
-        autoCapitalize="none"
-        placeholder="https://..."
       />
 
       {saved ? (

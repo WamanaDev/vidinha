@@ -78,6 +78,17 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
         backgroundColor: "#FAF7F2",
       },
     ],
+    // Foto de perfil (specs/security/file-uploads.md). Strings de permissão
+    // no tom de voz da marca (branding/02-tone-of-voice.md — "a gente"/"você").
+    [
+      "expo-image-picker",
+      {
+        photosPermission:
+          "A gente precisa acessar suas fotos para você escolher a sua foto de perfil.",
+        cameraPermission:
+          "A gente precisa da câmera para você tirar a sua foto de perfil.",
+      },
+    ],
     // Ver comentário acima de `sslPinningPlugin`: entra na lista só quando os
     // pins reais + domínio da API estiverem configurados via env var.
     ...(sslPinningPlugin ? [sslPinningPlugin] : []),

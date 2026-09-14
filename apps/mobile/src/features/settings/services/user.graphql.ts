@@ -1,5 +1,10 @@
 import { graphqlRequest } from "@lib/graphqlClient";
-import type { User, DataExportPayload } from "@app-types/graphql-generated";
+import type {
+  User,
+  DataExportPayload,
+  CompleteProfileInput,
+  AvatarUploadUrlPayload,
+} from "@app-types/graphql-generated";
 
 // Nomes de query/mutation e shapes conforme o SDL real de
 // packages/graphql-schema/schema.graphql (fonte da verdade — specs/mobile/00-overview.md
@@ -39,11 +44,6 @@ const COMPLETE_USER_PROFILE_MUTATION = /* GraphQL */ `
   }
 `;
 
-interface CompleteProfileInput {
-  displayName: string;
-  avatarUrl?: string | null;
-}
-
 interface CompleteUserProfileResult {
   completeUserProfile: User;
 }
@@ -53,6 +53,30 @@ export function completeUserProfile(input: CompleteProfileInput) {
     CompleteUserProfileResult,
     { input: CompleteProfileInput }
   >(COMPLETE_USER_PROFILE_MUTATION, { input });
+}
+
+// specs/security/file-uploads.md §2 (passo 1) — `mimeType` deve ser um dos
+// permitidos pelo bucket (`image/jpeg`, `image/png`, `image/webp`),
+// revalidado no client antes de chamar (ver `avatarUpload.ts`) só para não
+// desperdiçar uma signed URL, mas a allowlist real é sempre a do backend.
+const CREATE_AVATAR_UPLOAD_URL_MUTATION = /* GraphQL */ `
+  mutation CreateAvatarUploadUrl($mimeType: String!) {
+    createAvatarUploadUrl(mimeType: $mimeType) {
+      uploadUrl
+      path
+    }
+  }
+`;
+
+interface CreateAvatarUploadUrlResult {
+  createAvatarUploadUrl: AvatarUploadUrlPayload;
+}
+
+export function createAvatarUploadUrl(mimeType: string) {
+  return graphqlRequest<CreateAvatarUploadUrlResult, { mimeType: string }>(
+    CREATE_AVATAR_UPLOAD_URL_MUTATION,
+    { mimeType },
+  );
 }
 
 const EXPORT_MY_DATA_MUTATION = /* GraphQL */ `
