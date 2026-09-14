@@ -1,6 +1,15 @@
-import { ObjectType, Field, ID } from "@nestjs/graphql";
+import { ObjectType, Field, ID, registerEnumType } from "@nestjs/graphql";
+import { CardType as PrismaCardType } from "@prisma/client";
 import { Node } from "@common/types/node.interface";
 import { User } from "@auth/entities/user.entity";
+
+// SUPOSIÇÃO: o SDL de exemplo do contrato (cards.module.md §1) não expõe um
+// campo `type` em `Card`, mas o cadastro manual de cartão (accounts/cards
+// module, tarefa de CRUD manual) precisa que o usuário informe o tipo
+// (CREDIT/DEBIT/PREPAID) na criação — adicionamos o campo/enum ao ObjectType,
+// seguindo o schema Prisma real (fonte de verdade).
+export { PrismaCardType as CardType };
+registerEnumType(PrismaCardType, { name: "CardType" });
 
 /**
  * Mapeia o model Prisma `Card` para o ObjectType GraphQL do contrato do
@@ -28,6 +37,12 @@ export class Card implements Node {
 
   @Field()
   name: string;
+
+  @Field(() => PrismaCardType)
+  type: PrismaCardType;
+
+  @Field({ nullable: true })
+  brand?: string;
 
   @Field({ nullable: true })
   lastFourDigits?: string;

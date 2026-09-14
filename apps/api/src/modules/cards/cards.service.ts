@@ -1,5 +1,6 @@
 import { Injectable } from "@nestjs/common";
 import {
+  AuditAction,
   SharableResourceType,
   SharingPermission as PrismaSharingPermission,
   Card as PrismaCard,
@@ -7,11 +8,14 @@ import {
 } from "@prisma/client";
 import { PrismaService } from "@prisma-module/prisma.service";
 import { SharingPermissionsService } from "@modules/sharing-permissions/sharing-permissions.service";
+import { AuditLogService } from "@modules/audit-log/audit-log.service";
 import {
   ForbiddenAppException,
   NotFoundAppException,
 } from "@common/errors/app.exceptions";
 import { UpdateCardSharingInput } from "./dto/update-card-sharing.input";
+import { CreateCardInput } from "./dto/create-card.input";
+import { UpdateCardInput } from "./dto/update-card.input";
 import { Card } from "./entities/card.entity";
 
 type CardWithOwner = PrismaCard & { owner: PrismaUser };
@@ -27,6 +31,7 @@ export class CardsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly sharingPermissions: SharingPermissionsService,
+    private readonly auditLog: AuditLogService,
   ) {}
 
   /**
@@ -96,6 +101,111 @@ export class CardsService {
     return this.toEntity(card, permission);
   }
 
+  /**
+   * Cadastra um cartão manual (sem Open Finance). Espelha
+   * `AccountsService#create`: sempre criado com `isManual: true` e
+   * `connectionId: null`, nasce privado (sem `SharingPermission`).
+   * `currentInvoice` nunca fica `null` para um cartão manual (default 0)
+   * para que os incrementos de `TransactionsService` funcionem sem precisar
+   * tratar `null` como caso especial — SUPOSIÇÃO conservadora, já que o
+   * schema Prisma permite `null` (usado por cartões Open Finance sem fatura
+   * conhecida ainda).
+   */
+  async create(userId: string, input: CreateCardInput): Promise<Card> {
+    await this.assertActiveFamilyMember(input.familyId, userId);
+
+    if (input.billingAccountId) {
+      await this.assertOwnedAccount(input.billingAccountId, userId);
+    }
+
+    const created = await this.prisma.card.create({
+      data: {
+        ownerId: userId,
+        type: input.type,
+        name: input.name,
+        brand: input.brand,
+        lastFourDigits: input.lastFourDigits,
+        billingAccountId: input.billingAccountId,
+        creditLimit: input.creditLimit,
+        currentInvoice: input.currentInvoice ?? 0,
+        isManual: true,
+        connectionId: null,
+      },
+      include: { owner: true },
+    });
+
+    await this.auditLog.record({
+      actorId: userId,
+      familyId: input.familyId,
+      action: AuditAction.CARD_CREATED,
+      metadata: { cardId: created.id, type: created.type },
+    });
+
+    return this.toEntity(created, undefined);
+  }
+
+  /**
+   * Edita um cartão manual. Só o dono pode executar, e somente se
+   * `isManual === true` — mesma regra de `AccountsService#updateManual`.
+   */
+  async updateManual(userId: string, input: UpdateCardInput): Promise<Card> {
+    const card = await this.findOwnedCardOrThrow(input.id, userId);
+    this.assertManual(card);
+
+    if (input.billingAccountId) {
+      await this.assertOwnedAccount(input.billingAccountId, userId);
+    }
+
+    const familyId = await this.resolveOwnerFamilyId(userId);
+
+    const updated = await this.prisma.card.update({
+      where: { id: card.id },
+      data: {
+        name: input.name,
+        brand: input.brand,
+        lastFourDigits: input.lastFourDigits,
+        billingAccountId: input.billingAccountId,
+        creditLimit: input.creditLimit,
+        currentInvoice: input.currentInvoice,
+      },
+      include: { owner: true },
+    });
+
+    await this.auditLog.record({
+      actorId: userId,
+      familyId,
+      action: AuditAction.CARD_UPDATED,
+      metadata: { cardId: updated.id },
+    });
+
+    return this.toEntity(updated, undefined);
+  }
+
+  /**
+   * Soft-delete (`archivedAt`) de um cartão manual. Só o dono pode executar,
+   * e somente se `isManual === true`.
+   */
+  async archive(userId: string, id: string): Promise<boolean> {
+    const card = await this.findOwnedCardOrThrow(id, userId);
+    this.assertManual(card);
+
+    const familyId = await this.resolveOwnerFamilyId(userId);
+
+    await this.prisma.card.update({
+      where: { id: card.id },
+      data: { archivedAt: new Date() },
+    });
+
+    await this.auditLog.record({
+      actorId: userId,
+      familyId,
+      action: AuditAction.CARD_ARCHIVED,
+      metadata: { cardId: card.id },
+    });
+
+    return true;
+  }
+
   private toEntity(
     card: CardWithOwner,
     permission?: PrismaSharingPermission,
@@ -103,6 +213,8 @@ export class CardsService {
     return {
       id: card.id,
       name: card.name,
+      type: card.type,
+      brand: card.brand ?? undefined,
       lastFourDigits: card.lastFourDigits ?? undefined,
       limit: card.creditLimit !== null ? Number(card.creditLimit) : undefined,
       currentInvoice:
@@ -152,10 +264,45 @@ export class CardsService {
     }
     if (card.ownerId !== userId) {
       throw new ForbiddenAppException(
-        "Somente o dono do cartão pode alterar o compartilhamento.",
+        "Somente o dono do cartão pode executar esta ação.",
       );
     }
     return card;
+  }
+
+  /**
+   * Cartões sincronizados via Open Finance (`isManual: false`) são somente
+   * leitura, exceto compartilhamento — editar/arquivar exige `isManual: true`.
+   */
+  private assertManual(card: PrismaCard): void {
+    if (!card.isManual) {
+      throw new ForbiddenAppException(
+        "Somente cartões cadastrados manualmente podem ser editados ou arquivados.",
+      );
+    }
+  }
+
+  /**
+   * Valida que a conta de fatura/débito informada existe e pertence ao
+   * mesmo usuário que está cadastrando/editando o cartão — SUPOSIÇÃO
+   * conservadora (a spec não detalha essa regra): não faria sentido vincular
+   * um cartão manual à conta de outra pessoa.
+   */
+  private async assertOwnedAccount(
+    accountId: string,
+    userId: string,
+  ): Promise<void> {
+    const account = await this.prisma.account.findUnique({
+      where: { id: accountId },
+    });
+    if (!account) {
+      throw new NotFoundAppException("Conta de fatura não encontrada.");
+    }
+    if (account.ownerId !== userId) {
+      throw new ForbiddenAppException(
+        "A conta de fatura precisa pertencer ao mesmo usuário do cartão.",
+      );
+    }
   }
 
   /**

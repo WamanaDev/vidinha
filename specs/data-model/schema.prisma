@@ -46,6 +46,8 @@ enum AccountType {
   CHECKING        // conta corrente
   SAVINGS         // poupança
   INVESTMENT
+  CASH            // dinheiro em espécie ("Carteira") — sempre isManual, sem connectionId
+  CRYPTO          // criptoativos/carteira digital — sempre isManual, sem connectionId
   OTHER
 }
 
@@ -98,6 +100,15 @@ enum AuditAction {
   TRANSACTION_HIDDEN_TOGGLED
   USER_ACCOUNT_DELETION_REQUESTED
   USER_ACCOUNT_DELETED
+  ACCOUNT_CREATED
+  ACCOUNT_UPDATED
+  ACCOUNT_ARCHIVED
+  CARD_CREATED
+  CARD_UPDATED
+  CARD_ARCHIVED
+  TRANSACTION_CREATED
+  TRANSACTION_UPDATED
+  TRANSACTION_DELETED
 }
 
 // ---------------------------------------------------------------------------
@@ -221,6 +232,7 @@ model OpenFinanceConnection {
   user        User        @relation(fields: [userId], references: [id], onDelete: Cascade)
   institution Institution @relation(fields: [institutionId], references: [id])
   accounts    Account[]
+  cards       Card[]
 
   @@index([userId, status])
   @@index([status])
@@ -236,6 +248,10 @@ model Account {
   id           String       @id @default(uuid())
   ownerId      String
   connectionId String?
+  /// Id da conta no Pluggy (`PluggyAccount.id`) — usado como chave natural de
+  /// dedupe ao sincronizar contas via `OpenFinanceService#syncAccountsAndTransactions`
+  /// (nulo para contas cadastradas manualmente).
+  pluggyAccountId String?  @unique
   type         AccountType
   name         String
   /// Últimos 4 dígitos ou identificador não sensível (nunca número completo).
@@ -265,6 +281,9 @@ model Account {
 model Card {
   id              String   @id @default(uuid())
   ownerId         String
+  /// Conexão Open Finance de origem; nulo quando o cartão foi cadastrado manualmente
+  /// (`isManual = true`) — simétrico a `Account.connectionId`.
+  connectionId    String?
   /// Conta de fatura/débito vinculada (opcional: cartão pode não ter conta associada no MVP).
   billingAccountId String?
   type            CardType
@@ -272,6 +291,9 @@ model Card {
   name            String
   /// Últimos 4 dígitos apenas (nunca PAN completo — ver 00-DECISIONS §2 sobre PCI-DSS).
   lastFourDigits  String?
+  /// Id da conta no Pluggy (`PluggyAccount.id`, type=CREDIT) — chave natural de
+  /// dedupe ao sincronizar cartões (nulo para cartões cadastrados manualmente).
+  pluggyAccountId String?  @unique
   creditLimit     Decimal? @db.Decimal(14, 2)
   currentInvoice  Decimal? @db.Decimal(14, 2)
   isManual        Boolean  @default(false)
@@ -279,12 +301,14 @@ model Card {
   updatedAt       DateTime @updatedAt
   archivedAt      DateTime?
 
-  owner          User          @relation(fields: [ownerId], references: [id], onDelete: Cascade)
-  billingAccount Account?      @relation(fields: [billingAccountId], references: [id])
+  owner          User                   @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  connection     OpenFinanceConnection? @relation(fields: [connectionId], references: [id])
+  billingAccount Account?               @relation(fields: [billingAccountId], references: [id])
   transactions   Transaction[]
   sharingPermissions SharingPermission[] @relation("CardSharing")
 
   @@index([ownerId])
+  @@index([connectionId])
   @@index([billingAccountId])
   @@index([ownerId, archivedAt])
 }

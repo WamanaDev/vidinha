@@ -7,9 +7,20 @@
 ## 1. Contrato GraphQL (SDL)
 
 ```graphql
+enum CardType {
+  CREDIT
+  DEBIT
+  PREPAID
+}
+
+# SUPOSIÇÃO: `type`/`brand` foram adicionados ao ObjectType (ausentes no
+# rascunho original deste contrato) — necessários para o cadastro manual de
+# cartão (`createCard`), que precisa que o usuário informe o tipo do cartão.
 type Card implements Node {
   id: ID!
   name: String!
+  type: CardType!
+  brand: String
   lastFourDigits: String
   limit: Float
   currentInvoice: Float
@@ -23,12 +34,42 @@ input UpdateCardSharingInput {
   sharedWithFamily: Boolean!
 }
 
+# Cadastro manual de cartão (sem Open Finance) — sempre cria com
+# `isManual: true`, `connectionId: null`. `familyId` só é usado para checar
+# que o chamador é membro ativo. `billingAccountId`, se informado, precisa
+# pertencer ao mesmo usuário.
+input CreateCardInput {
+  familyId: ID!
+  name: String!
+  type: CardType!
+  brand: String
+  lastFourDigits: String
+  billingAccountId: ID
+  creditLimit: Float
+  currentInvoice: Float # fatura/saldo inicial, default 0
+}
+
+# Edição de cartão manual. Só permitido quando `isManual: true` e o chamador
+# é o dono. `type` não é editável após a criação.
+input UpdateCardInput {
+  id: ID!
+  name: String
+  brand: String
+  lastFourDigits: String
+  billingAccountId: ID
+  creditLimit: Float
+  currentInvoice: Float
+}
+
 type Query {
   cards(familyId: ID!): [Card!]!
 }
 
 type Mutation {
   updateCardSharing(input: UpdateCardSharingInput!): Card!
+  createCard(input: CreateCardInput!): Card!
+  updateCard(input: UpdateCardInput!): Card!
+  archiveCard(id: ID!): Boolean! # soft-delete (archivedAt), só isManual + dono
 }
 ```
 
@@ -39,8 +80,9 @@ type Mutation {
 - **Dados de cartão nunca incluem PAN completo ou CVV** — `lastFourDigits` é o único identificador exposto, consistente com o dado agregado fornecido pelo Pluggy (`00-DECISIONS.md §2`) e com o escopo de PCI-DSS tratado como fora do perímetro direto do Vidinha.
 - `updateCardSharing` só pode ser executada pelo **dono** do cartão — checagem de posse no service (nunca no DTO).
 - Autorização de leitura (`cards(familyId)`): o dono sempre vê seus próprios cartões; os demais membros da família só veem cartões com `sharedWithFamily: true`.
-- Cartões originam-se de conexões Open Finance (`AccountType.CREDIT_CARD_WALLET` na carteira associada, ver [`../open-finance/open-finance.module.md`](../open-finance/open-finance.module.md) e [`../accounts/accounts.module.md`](../accounts/accounts.module.md)).
+- Cartões originam-se de conexões Open Finance (ver [`../open-finance/open-finance.module.md`](../open-finance/open-finance.module.md)) ou são cadastrados manualmente (`isManual: true`, `connectionId: null`).
 - Alteração de `sharedWithFamily` é evento auditável (`00-DECISIONS.md §9`) — ver [`../audit-log/audit-log.module.md`](../audit-log/audit-log.module.md).
+- **CRUD manual** (`createCard`/`updateCard`/`archiveCard`): espelha exatamente o CRUD manual de `Account` (ver `accounts.module.md`). `createCard` sempre cria com `isManual: true`, `connectionId: null`, `currentInvoice` nunca fica `null` (default 0) para que os incrementos de `TransactionsService` funcionem sem tratar `null` como caso especial. `updateCard`/`archiveCard` exigem `isManual: true` e que o chamador seja o dono. SUPOSIÇÃO: para cartões manuais, `currentInvoice` é tratado como "valor devido" (fatura em aberto) para qualquer `CardType` (CREDIT/DEBIT/PREPAID), já que o schema não tem um campo de saldo específico por tipo — uma transação `DEBIT` aumenta `currentInvoice`, uma `CREDIT` diminui. Eventos `CARD_CREATED`/`CARD_UPDATED`/`CARD_ARCHIVED` são auditados.
 
 ## 3. Estrutura de arquivos esperada (seguindo o padrão `family`)
 

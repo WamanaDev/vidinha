@@ -49,13 +49,60 @@ export interface PluggyItem {
   userAction?: PluggyItemUserAction;
 }
 
+/**
+ * Confirmado via MCP oficial da Pluggy (`GET /accounts`): `type` é `"BANK"`
+ * ou `"CREDIT"` (nível macro), e `subtype` detalha o tipo dentro de cada
+ * categoria (`"CHECKING_ACCOUNT"`, `"SAVINGS_ACCOUNT"`, `"CREDIT_CARD"`,
+ * etc). Contas `type: "CREDIT"` viram `Card` (Prisma); `type: "BANK"` vira
+ * `Account` — ver `isPluggyCardAccount` em `open-finance.service.ts`.
+ */
+export interface PluggyCreditData {
+  level?: string;
+  brand?: string;
+  creditLimit?: number;
+  availableCreditLimit?: number;
+  balanceCloseDate?: string;
+  balanceDueDate?: string;
+  minimumPayment?: number;
+}
+
 export interface PluggyAccount {
   id: string;
+  itemId?: string;
   type: string;
+  subtype?: string;
   name: string;
   number?: string;
   balance: number;
   currencyCode: string;
+  creditData?: PluggyCreditData;
+}
+
+/**
+ * Confirmado via MCP oficial da Pluggy (`GET /v2/transactions`): `type`
+ * (`"DEBIT"`|`"CREDIT"`) sempre vem preenchido — não precisa de fallback
+ * baseado no sinal de `amount`. Para cartão de crédito a Pluggy já normaliza
+ * a convenção do ponto de vista do portador (compra = DEBIT, pagamento de
+ * fatura = CREDIT); nunca inverter esse sinal. `status` (`"POSTED"`|
+ * `"PENDING"`) indica se a transação já foi efetivada.
+ */
+export interface PluggyTransaction {
+  id: string;
+  description: string;
+  amount: number;
+  date: string;
+  currencyCode: string;
+  type: string;
+  status?: string;
+  category?: string;
+  categoryId?: string;
+  accountId: string;
+}
+
+export interface PluggyTransactionPage {
+  results: PluggyTransaction[];
+  /** Query-string pronta (`?accountId=...&after=...`) para a próxima página, ou `null` se não houver mais páginas. */
+  next: string | null;
 }
 
 export interface PluggyConnectorCredentialOption {
@@ -229,6 +276,33 @@ export class PluggyClientService {
       { method: "GET", headers: { "X-API-KEY": apiKey } },
     );
     return response.results;
+  }
+
+  /**
+   * Busca uma página de transações de uma conta/cartão Pluggy (`GET
+   * /v2/transactions`, confirmado via MCP oficial da Pluggy). Paginação por
+   * cursor: `options.after` recebe o cursor bruto (já decodificado) retornado
+   * em `PluggyTransactionPage.next` da chamada anterior — nunca concatenar a
+   * query-string inteira de `next`, apenas extrair o valor do parâmetro
+   * `after`. `dateFrom`/`dateTo` usam formato `yyyy-mm-dd`. O caller
+   * (`OpenFinanceService#syncTransactionsForResource`) é responsável por
+   * paginar até `next` vir `null`.
+   */
+  async getTransactions(
+    accountId: string,
+    options: { dateFrom?: string; dateTo?: string; after?: string } = {},
+  ): Promise<PluggyTransactionPage> {
+    const apiKey = await this.getApiKey();
+    const params = new URLSearchParams();
+    params.set("accountId", accountId);
+    if (options.dateFrom) params.set("dateFrom", options.dateFrom);
+    if (options.dateTo) params.set("dateTo", options.dateTo);
+    if (options.after) params.set("after", options.after);
+
+    return this.request<PluggyTransactionPage>(
+      `/v2/transactions?${params.toString()}`,
+      { method: "GET", headers: { "X-API-KEY": apiKey } },
+    );
   }
 
   /** Força uma nova sincronização do item no Pluggy (usado por syncOpenFinanceConnection). */

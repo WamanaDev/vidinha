@@ -2,6 +2,7 @@ import { Test } from "@nestjs/testing";
 import { CardsService } from "./cards.service";
 import { PrismaService } from "@prisma-module/prisma.service";
 import { SharingPermissionsService } from "@modules/sharing-permissions/sharing-permissions.service";
+import { AuditLogService } from "@modules/audit-log/audit-log.service";
 import {
   ForbiddenAppException,
   NotFoundAppException,
@@ -16,12 +17,19 @@ describe("CardsService", () => {
       findMany: jest.Mock;
       findFirst: jest.Mock;
     };
-    card: { findMany: jest.Mock; findUnique: jest.Mock };
+    card: {
+      findMany: jest.Mock;
+      findUnique: jest.Mock;
+      create: jest.Mock;
+      update: jest.Mock;
+    };
+    account: { findUnique: jest.Mock };
   };
   let sharingPermissions: {
     findActiveByResourceIds: jest.Mock;
     upsertForResource: jest.Mock;
   };
+  let auditLog: { record: jest.Mock };
 
   const familyId = "family-1";
   const ownerId = "owner-1";
@@ -46,6 +54,7 @@ describe("CardsService", () => {
     lastFourDigits: "1234",
     creditLimit: "1000.00",
     currentInvoice: "200.00",
+    isManual: false,
     archivedAt: null,
     owner,
   };
@@ -60,6 +69,22 @@ describe("CardsService", () => {
     lastFourDigits: "5678",
     creditLimit: "2000.00",
     currentInvoice: "50.00",
+    isManual: true,
+    archivedAt: null,
+    owner,
+  };
+
+  const syncedCard = {
+    id: "card-synced",
+    ownerId,
+    billingAccountId: null,
+    type: CardType.CREDIT,
+    brand: "VISA",
+    name: "Cartão Sincronizado",
+    lastFourDigits: "9999",
+    creditLimit: "3000.00",
+    currentInvoice: "0.00",
+    isManual: false,
     archivedAt: null,
     owner,
   };
@@ -71,18 +96,26 @@ describe("CardsService", () => {
         findMany: jest.fn(),
         findFirst: jest.fn(),
       },
-      card: { findMany: jest.fn(), findUnique: jest.fn() },
+      card: {
+        findMany: jest.fn(),
+        findUnique: jest.fn(),
+        create: jest.fn(),
+        update: jest.fn(),
+      },
+      account: { findUnique: jest.fn() },
     };
     sharingPermissions = {
       findActiveByResourceIds: jest.fn(),
       upsertForResource: jest.fn(),
     };
+    auditLog = { record: jest.fn() };
 
     const moduleRef = await Test.createTestingModule({
       providers: [
         CardsService,
         { provide: PrismaService, useValue: prisma },
         { provide: SharingPermissionsService, useValue: sharingPermissions },
+        { provide: AuditLogService, useValue: auditLog },
       ],
     }).compile();
 
@@ -228,6 +261,123 @@ describe("CardsService", () => {
           sharedWithFamily: true,
         }),
       ).rejects.toBeInstanceOf(NotFoundAppException);
+    });
+  });
+
+  describe("create", () => {
+    it("cria um cartão manual e audita o evento", async () => {
+      prisma.familyMember.findUnique.mockResolvedValue({
+        userId: ownerId,
+        familyId,
+        removedAt: null,
+      });
+      prisma.card.create.mockResolvedValue({ ...privateCard, owner });
+
+      const result = await service.create(ownerId, {
+        familyId,
+        name: "Cartão Manual",
+        type: CardType.CREDIT,
+      });
+
+      expect(prisma.card.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            ownerId,
+            isManual: true,
+            connectionId: null,
+            currentInvoice: 0,
+          }),
+        }),
+      );
+      expect(auditLog.record).toHaveBeenCalledWith(
+        expect.objectContaining({ actorId: ownerId, familyId }),
+      );
+      expect(result.id).toBe(privateCard.id);
+    });
+
+    it("lança NotFoundAppException quando o usuário não pertence à família", async () => {
+      prisma.familyMember.findUnique.mockResolvedValue(null);
+
+      await expect(
+        service.create(outsiderId, {
+          familyId,
+          name: "Cartão",
+          type: CardType.CREDIT,
+        }),
+      ).rejects.toBeInstanceOf(NotFoundAppException);
+      expect(prisma.card.create).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("updateManual", () => {
+    it("permite que o dono edite um cartão manual", async () => {
+      prisma.card.findUnique.mockResolvedValue(privateCard);
+      prisma.familyMember.findFirst.mockResolvedValue({ familyId });
+      prisma.card.update.mockResolvedValue({
+        ...privateCard,
+        name: "Novo nome",
+      });
+
+      const result = await service.updateManual(ownerId, {
+        id: privateCard.id,
+        name: "Novo nome",
+      });
+
+      expect(result.name).toBe("Novo nome");
+      expect(auditLog.record).toHaveBeenCalled();
+    });
+
+    it("rejeita editar um cartão sincronizado via Open Finance", async () => {
+      prisma.card.findUnique.mockResolvedValue(syncedCard);
+
+      await expect(
+        service.updateManual(ownerId, {
+          id: syncedCard.id,
+          name: "Tentativa",
+        }),
+      ).rejects.toBeInstanceOf(ForbiddenAppException);
+      expect(prisma.card.update).not.toHaveBeenCalled();
+    });
+
+    it("rejeita edição por quem não é dono", async () => {
+      prisma.card.findUnique.mockResolvedValue(privateCard);
+
+      await expect(
+        service.updateManual(outsiderId, {
+          id: privateCard.id,
+          name: "Tentativa",
+        }),
+      ).rejects.toBeInstanceOf(ForbiddenAppException);
+    });
+  });
+
+  describe("archive", () => {
+    it("arquiva um cartão manual do dono", async () => {
+      prisma.card.findUnique.mockResolvedValue(privateCard);
+      prisma.familyMember.findFirst.mockResolvedValue({ familyId });
+      prisma.card.update.mockResolvedValue({
+        ...privateCard,
+        archivedAt: new Date(),
+      });
+
+      const result = await service.archive(ownerId, privateCard.id);
+
+      expect(result).toBe(true);
+      expect(prisma.card.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: privateCard.id },
+          data: expect.objectContaining({ archivedAt: expect.any(Date) }),
+        }),
+      );
+      expect(auditLog.record).toHaveBeenCalled();
+    });
+
+    it("rejeita arquivar um cartão sincronizado via Open Finance", async () => {
+      prisma.card.findUnique.mockResolvedValue(syncedCard);
+
+      await expect(
+        service.archive(ownerId, syncedCard.id),
+      ).rejects.toBeInstanceOf(ForbiddenAppException);
     });
   });
 });

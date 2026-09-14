@@ -2,6 +2,7 @@ import { Test } from "@nestjs/testing";
 import { AccountsService } from "./accounts.service";
 import { PrismaService } from "@prisma-module/prisma.service";
 import { SharingPermissionsService } from "@modules/sharing-permissions/sharing-permissions.service";
+import { AuditLogService } from "@modules/audit-log/audit-log.service";
 import {
   ForbiddenAppException,
   NotFoundAppException,
@@ -16,13 +17,19 @@ describe("AccountsService", () => {
       findMany: jest.Mock;
       findFirst: jest.Mock;
     };
-    account: { findMany: jest.Mock; findUnique: jest.Mock };
+    account: {
+      findMany: jest.Mock;
+      findUnique: jest.Mock;
+      create: jest.Mock;
+      update: jest.Mock;
+    };
     openFinanceConnection: { findUnique: jest.Mock };
   };
   let sharingPermissions: {
     findActiveByResourceIds: jest.Mock;
     upsertForResource: jest.Mock;
   };
+  let auditLog: { record: jest.Mock };
 
   const familyId = "family-1";
   const ownerId = "owner-1";
@@ -46,6 +53,7 @@ describe("AccountsService", () => {
     maskedNumber: null,
     currency: "BRL",
     balance: "100.00",
+    isManual: false,
     archivedAt: null,
     owner,
   };
@@ -59,6 +67,21 @@ describe("AccountsService", () => {
     maskedNumber: null,
     currency: "BRL",
     balance: "500.00",
+    isManual: true,
+    archivedAt: null,
+    owner,
+  };
+
+  const syncedAccount = {
+    id: "account-synced",
+    ownerId,
+    connectionId: "connection-1",
+    type: AccountType.CHECKING,
+    name: "Conta Sincronizada",
+    maskedNumber: "1234",
+    currency: "BRL",
+    balance: "900.00",
+    isManual: false,
     archivedAt: null,
     owner,
   };
@@ -70,19 +93,26 @@ describe("AccountsService", () => {
         findMany: jest.fn(),
         findFirst: jest.fn(),
       },
-      account: { findMany: jest.fn(), findUnique: jest.fn() },
+      account: {
+        findMany: jest.fn(),
+        findUnique: jest.fn(),
+        create: jest.fn(),
+        update: jest.fn(),
+      },
       openFinanceConnection: { findUnique: jest.fn() },
     };
     sharingPermissions = {
       findActiveByResourceIds: jest.fn(),
       upsertForResource: jest.fn(),
     };
+    auditLog = { record: jest.fn() };
 
     const moduleRef = await Test.createTestingModule({
       providers: [
         AccountsService,
         { provide: PrismaService, useValue: prisma },
         { provide: SharingPermissionsService, useValue: sharingPermissions },
+        { provide: AuditLogService, useValue: auditLog },
       ],
     }).compile();
 
@@ -239,6 +269,125 @@ describe("AccountsService", () => {
           fullDetailShared: false,
         }),
       ).rejects.toBeInstanceOf(NotFoundAppException);
+    });
+  });
+
+  describe("create", () => {
+    it("cria uma conta manual (ex.: Carteira) e audita o evento", async () => {
+      prisma.familyMember.findUnique.mockResolvedValue({
+        userId: ownerId,
+        familyId,
+        removedAt: null,
+      });
+      prisma.account.create.mockResolvedValue({ ...privateAccount, owner });
+
+      const result = await service.create(ownerId, {
+        familyId,
+        name: "Carteira",
+        type: AccountType.CASH,
+        balance: 500,
+      });
+
+      expect(prisma.account.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            ownerId,
+            isManual: true,
+            connectionId: null,
+            currency: "BRL",
+          }),
+        }),
+      );
+      expect(auditLog.record).toHaveBeenCalledWith(
+        expect.objectContaining({ actorId: ownerId, familyId }),
+      );
+      expect(result.id).toBe(privateAccount.id);
+    });
+
+    it("lança NotFoundAppException quando o usuário não pertence à família", async () => {
+      prisma.familyMember.findUnique.mockResolvedValue(null);
+
+      await expect(
+        service.create(outsiderId, {
+          familyId,
+          name: "Carteira",
+          type: AccountType.CASH,
+          balance: 100,
+        }),
+      ).rejects.toBeInstanceOf(NotFoundAppException);
+      expect(prisma.account.create).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("updateManual", () => {
+    it("permite que o dono edite uma conta manual", async () => {
+      prisma.account.findUnique.mockResolvedValue(privateAccount);
+      prisma.familyMember.findFirst.mockResolvedValue({ familyId });
+      prisma.account.update.mockResolvedValue({
+        ...privateAccount,
+        name: "Novo nome",
+      });
+
+      const result = await service.updateManual(ownerId, {
+        id: privateAccount.id,
+        name: "Novo nome",
+      });
+
+      expect(result.name).toBe("Novo nome");
+      expect(auditLog.record).toHaveBeenCalled();
+    });
+
+    it("rejeita editar uma conta sincronizada via Open Finance", async () => {
+      prisma.account.findUnique.mockResolvedValue(syncedAccount);
+
+      await expect(
+        service.updateManual(ownerId, {
+          id: syncedAccount.id,
+          name: "Tentativa",
+        }),
+      ).rejects.toBeInstanceOf(ForbiddenAppException);
+      expect(prisma.account.update).not.toHaveBeenCalled();
+    });
+
+    it("rejeita edição por quem não é dono", async () => {
+      prisma.account.findUnique.mockResolvedValue(privateAccount);
+
+      await expect(
+        service.updateManual(outsiderId, {
+          id: privateAccount.id,
+          name: "Tentativa",
+        }),
+      ).rejects.toBeInstanceOf(ForbiddenAppException);
+    });
+  });
+
+  describe("archive", () => {
+    it("arquiva uma conta manual do dono", async () => {
+      prisma.account.findUnique.mockResolvedValue(privateAccount);
+      prisma.familyMember.findFirst.mockResolvedValue({ familyId });
+      prisma.account.update.mockResolvedValue({
+        ...privateAccount,
+        archivedAt: new Date(),
+      });
+
+      const result = await service.archive(ownerId, privateAccount.id);
+
+      expect(result).toBe(true);
+      expect(prisma.account.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: privateAccount.id },
+          data: expect.objectContaining({ archivedAt: expect.any(Date) }),
+        }),
+      );
+      expect(auditLog.record).toHaveBeenCalled();
+    });
+
+    it("rejeita arquivar uma conta sincronizada via Open Finance", async () => {
+      prisma.account.findUnique.mockResolvedValue(syncedAccount);
+
+      await expect(
+        service.archive(ownerId, syncedAccount.id),
+      ).rejects.toBeInstanceOf(ForbiddenAppException);
     });
   });
 });

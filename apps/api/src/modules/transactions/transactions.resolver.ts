@@ -1,4 +1,4 @@
-import { Resolver, Query, Mutation, Args, Int } from "@nestjs/graphql";
+import { Resolver, Query, Mutation, Args, Int, ID } from "@nestjs/graphql";
 import { CurrentUser } from "@common/decorators/current-user.decorator";
 import { AuthUser } from "@common/types/auth-user.type";
 import { GraphQLCursor } from "@common/types/cursor.scalar";
@@ -7,6 +7,8 @@ import { TransactionFilterInput } from "./dto/transaction-filter.input";
 import { TransactionOrderInput } from "./dto/transaction-order.input";
 import { HideTransactionInput } from "./dto/hide-transaction.input";
 import { UpdateTransactionCategoryInput } from "./dto/update-transaction-category.input";
+import { CreateTransactionInput } from "./dto/create-transaction.input";
+import { UpdateTransactionInput } from "./dto/update-transaction.input";
 import { Transaction } from "./entities/transaction.entity";
 import { TransactionConnection } from "./entities/transaction-connection.entity";
 
@@ -56,5 +58,29 @@ export class TransactionsResolver {
       user.userId,
       input,
     );
+  }
+
+  @Mutation(() => Transaction)
+  async createTransaction(
+    @CurrentUser() user: AuthUser,
+    @Args("input") input: CreateTransactionInput,
+  ): Promise<Transaction> {
+    return this.transactionsService.createManual(user.userId, input);
+  }
+
+  @Mutation(() => Transaction)
+  async updateTransaction(
+    @CurrentUser() user: AuthUser,
+    @Args("input") input: UpdateTransactionInput,
+  ): Promise<Transaction> {
+    return this.transactionsService.updateManual(user.userId, input);
+  }
+
+  @Mutation(() => Boolean)
+  async deleteTransaction(
+    @CurrentUser() user: AuthUser,
+    @Args("id", { type: () => ID }) id: string,
+  ): Promise<boolean> {
+    return this.transactionsService.deleteManual(user.userId, id);
   }
 }

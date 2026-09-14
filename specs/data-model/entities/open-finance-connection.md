@@ -22,6 +22,7 @@ model OpenFinanceConnection {
   user        User        @relation(fields: [userId], references: [id], onDelete: Cascade)
   institution Institution @relation(fields: [institutionId], references: [id])
   accounts    Account[]
+  cards       Card[]
 
   @@index([userId, status])
   @@index([status])
@@ -43,23 +44,24 @@ enum ConnectionStatus {
 
 ## 2. Explicação dos Campos
 
-| Campo | Tipo | Explicação |
-|---|---|---|
-| `id` | `String` (PK, `uuid()`) | Identificador único interno da conexão. |
-| `userId` | `String` (FK) | Usuário dono da conexão — **nunca** uma família diretamente; o compartilhamento é feito depois, via `SharingPermission`. |
-| `institutionId` | `String` (FK) | Instituição financeira à qual a conexão se refere. |
-| `pluggyItemId` | `String` único | Identificador do "item" no Pluggy — chave de correlação com o provedor para webhooks e re-sync. |
-| `status` | `ConnectionStatus` (default `UPDATING`) | Estado atual da conexão: `CONNECTED` (ativa e sincronizando), `UPDATING` (sync em andamento), `LOGIN_ERROR` (credenciais inválidas, requer reautenticação), `OUTDATED` (Pluggy sinalizou item desatualizado), `ERROR` (erro genérico do provedor), `REVOKED` (consentimento revogado pelo usuário). |
-| `lastSyncedAt` | `DateTime?` | Timestamp da última sincronização bem-sucedida, reportado por webhook/job. |
-| `revokedAt` | `DateTime?` | Preenchido quando `status = REVOKED`; soft-delete lógico que mantém histórico de transações já importadas. |
-| `createdAt` | `DateTime` | Data de criação da conexão. |
-| `updatedAt` | `DateTime` | Atualizado automaticamente a cada mudança de status/sync. |
+| Campo           | Tipo                                    | Explicação                                                                                                                                                                                                                                                                                          |
+| --------------- | --------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `id`            | `String` (PK, `uuid()`)                 | Identificador único interno da conexão.                                                                                                                                                                                                                                                             |
+| `userId`        | `String` (FK)                           | Usuário dono da conexão — **nunca** uma família diretamente; o compartilhamento é feito depois, via `SharingPermission`.                                                                                                                                                                            |
+| `institutionId` | `String` (FK)                           | Instituição financeira à qual a conexão se refere.                                                                                                                                                                                                                                                  |
+| `pluggyItemId`  | `String` único                          | Identificador do "item" no Pluggy — chave de correlação com o provedor para webhooks e re-sync.                                                                                                                                                                                                     |
+| `status`        | `ConnectionStatus` (default `UPDATING`) | Estado atual da conexão: `CONNECTED` (ativa e sincronizando), `UPDATING` (sync em andamento), `LOGIN_ERROR` (credenciais inválidas, requer reautenticação), `OUTDATED` (Pluggy sinalizou item desatualizado), `ERROR` (erro genérico do provedor), `REVOKED` (consentimento revogado pelo usuário). |
+| `lastSyncedAt`  | `DateTime?`                             | Timestamp da última sincronização bem-sucedida, reportado por webhook/job.                                                                                                                                                                                                                          |
+| `revokedAt`     | `DateTime?`                             | Preenchido quando `status = REVOKED`; soft-delete lógico que mantém histórico de transações já importadas.                                                                                                                                                                                          |
+| `createdAt`     | `DateTime`                              | Data de criação da conexão.                                                                                                                                                                                                                                                                         |
+| `updatedAt`     | `DateTime`                              | Atualizado automaticamente a cada mudança de status/sync.                                                                                                                                                                                                                                           |
 
 ## 3. Relações
 
 - `user` → [user.md](user.md): dono da conexão (`onDelete: Cascade`).
 - `institution` → [institution.md](institution.md): instituição financeira conectada.
 - `accounts` → [account.md](account.md): contas obtidas via esta conexão (uma conexão agrega N contas).
+- `cards` → [card.md](card.md): cartões obtidos via esta conexão (contas Pluggy `type: CREDIT`, ver `OpenFinanceService#syncAccountsAndTransactions`).
 
 ## 4. Regras de Negócio
 
