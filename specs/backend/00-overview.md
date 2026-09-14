@@ -3,6 +3,7 @@
 **Status:** Reestruturação de `specs/02-API-AUTH.md` e `specs/06-BACKEND-IMPLEMENTATION-GUIDE.md` (conteúdo original preservado integralmente, apenas reorganizado por domínio/responsabilidade).
 
 **Pré-requisitos lidos e respeitados como fonte da verdade — nenhuma decisão contrariada:**
+
 - `CLAUDE.md` §§10-11 (backend/GraphQL), §13 (arquitetura por feature), §14 (separação de responsabilidades), §15 (path aliases), §28 (validação de dados), §29 (menor privilégio), §31 (tratamento de erros).
 - `specs/00-DECISIONS.md` (Supabase Auth+JWKS, RBAC+CASL, Vercel Serverless, Prisma/Postgres, Pluggy, custo zero).
 - `specs/01-DATA-MODEL.md` (schema Prisma — nomes exatos de models/enums/campos usados aqui).
@@ -23,6 +24,7 @@ Este documento (e os arquivos linkados abaixo) são escritos para que **outro ag
 - [`common/exception-filter.md`](./common/exception-filter.md) — `GraphQLExceptionFilter`, `ErrorCode`, formato padronizado de erro.
 - [`common/rate-limiting.md`](./common/rate-limiting.md) — `@nestjs/throttler` (named throttlers) e política de CORS.
 - [`common/vercel-serverless-handler.md`](./common/vercel-serverless-handler.md) — `main.ts`, `api/graphql.ts`, `PrismaService`/connection pooling serverless, cold start.
+- `modules/storage/` (`@Global()`, sem spec própria ainda — ver [`../security/file-uploads.md`](../security/file-uploads.md)) — `SupabaseStorageService`: `createUploadUrl`/`createReadUrl`/`deleteObject`/`resolveAvatarUrl`, usado por `auth` (avatar) e por todo resolver que serializa `User.avatarUrl`.
 
 ### Módulo `family` (exemplo completo de código, referência de padrão para os demais)
 
@@ -96,12 +98,17 @@ apps/api/
 │   │   ├── auth.module.ts
 │   │   ├── strategies/
 │   │   │   └── supabase-jwt.strategy.ts        # SupabaseJwtStrategy (JWKS via jwks-rsa — ver common/jwt-auth-guard.md)
-│   │   ├── auth.resolver.ts            # Query me, Mutation completeUserProfile/requestAccountDeletion/exportMyData/logoutAllDevices
-│   │   ├── auth.service.ts             # JIT provisioning do User local, integração Supabase Admin API
+│   │   ├── auth.resolver.ts            # Query me, Mutation completeUserProfile/createAvatarUploadUrl/requestAccountDeletion/exportMyData/logoutAllDevices
+│   │   ├── auth.service.ts             # JIT provisioning do User local, integração Supabase Admin API, upload de avatar (via SupabaseStorageService)
 │   │   ├── dto/
-│   │   │   └── complete-profile.input.ts
+│   │   │   └── complete-profile.input.ts       # avatarPath (não mais avatarUrl) — ver 00-DECISIONS.md §12
 │   │   └── entities/
-│   │       └── user.entity.ts          # User GraphQL ObjectType
+│   │       ├── user.entity.ts          # User GraphQL ObjectType
+│   │       └── avatar-upload-url-payload.entity.ts  # Retorno de createAvatarUploadUrl (uploadUrl + path)
+│   ├── modules/storage/
+│   │   ├── storage.module.ts           # @Global()
+│   │   ├── storage.service.ts          # SupabaseStorageService
+│   │   └── storage.service.spec.ts
 │   ├── casl/
 │   │   ├── casl.module.ts
 │   │   ├── ability.factory.ts          # AbilityFactory.createForUser (ver common/casl-ability-factory.md)
@@ -141,7 +148,9 @@ apps/api/
 │       │   ├── accounts.service.ts
 │       │   ├── accounts.service.spec.ts
 │       │   ├── dto/
-│       │   │   └── update-account-sharing.input.ts
+│       │   │   ├── update-account-sharing.input.ts
+│       │   │   ├── create-account.input.ts     # CRUD manual — ver accounts.module.md
+│       │   │   └── update-account.input.ts
 │       │   └── entities/
 │       │       └── account.entity.ts
 │       ├── cards/
@@ -150,7 +159,9 @@ apps/api/
 │       │   ├── cards.service.ts
 │       │   ├── cards.service.spec.ts
 │       │   ├── dto/
-│       │   │   └── update-card-sharing.input.ts
+│       │   │   ├── update-card-sharing.input.ts
+│       │   │   ├── create-card.input.ts        # CRUD manual — ver cards.module.md
+│       │   │   └── update-card.input.ts
 │       │   └── entities/
 │       │       └── card.entity.ts
 │       ├── transactions/
@@ -162,7 +173,9 @@ apps/api/
 │       │   │   ├── transaction-filter.input.ts
 │       │   │   ├── transaction-order.input.ts
 │       │   │   ├── hide-transaction.input.ts
-│       │   │   └── update-transaction-category.input.ts
+│       │   │   ├── update-transaction-category.input.ts
+│       │   │   ├── create-transaction.input.ts     # CRUD manual — ver transactions.module.md §1/§2
+│       │   │   └── update-transaction.input.ts
 │       │   └── entities/
 │       │       ├── transaction.entity.ts
 │       │       ├── transaction-edge.entity.ts
@@ -249,9 +262,9 @@ apps/api/
       "@prisma-module/*": ["prisma/*"],
       "@auth/*": ["auth/*"],
       "@casl/*": ["casl/*"],
-      "@modules/*": ["modules/*"]
-    }
-  }
+      "@modules/*": ["modules/*"],
+    },
+  },
 }
 ```
 
@@ -281,19 +294,19 @@ Motivo (reforça `CLAUDE.md §14` — separação UI/regras de negócio/persist�
 
 ## 3. Ordem recomendada de implementação dos módulos
 
-| # | Passo | Justificativa (dependências) |
-|---|---|---|
-| 1 | **Prisma schema + migrations** (`prisma/schema.prisma` copiado de `01-DATA-MODEL.md §2`, `prisma migrate dev`, seed de `Category`/`Institution`) | Todo o resto depende do client Prisma gerado e das tabelas existirem; nenhum service pode ser escrito sem os tipos do `@prisma/client`. |
-| 2 | **`PrismaModule`/`PrismaService`** | Provider global consumido por todos os módulos subsequentes — precisa existir antes de qualquer `*.service.ts`. |
-| 3 | **`auth` (JWKS guard + JIT provisioning do `User`)** | Nenhum resolver pode ser testado/exercitado sem um usuário autenticado válido; `AbilityFactory` (passo 4) depende de `req.user` já populado pelo guard. Ver `common/jwt-auth-guard.md`. |
-| 4 | **`casl` (`AbilityFactory`) + guards globais (`JwtAuthGuard`, `PoliciesGuard`, `GraphQLExceptionFilter`, `ValidationPipe`)** | Autorização e tratamento de erro são transversais a todos os módulos de domínio; implementá-los antes evita retrabalho de "adicionar guard depois" em cada resolver já escrito. Ver `common/casl-ability-factory.md` e `common/exception-filter.md`. |
-| 5 | **`family`** | Primeiro módulo de domínio porque `familyId` é pré-requisito de autorização (RBAC) para praticamente todos os demais módulos (compartilhamento, despesas recorrentes, etc.) — sem `Family`/`FamilyMember`, a `AbilityFactory` não tem o que consultar. Ver `modules/family/`. |
-| 6 | **`sharing-permissions`** | Depende de `Family` existir (passo 5) e é pré-requisito para que `accounts`/`cards`/`transactions` (passo 8) saibam decidir visibilidade cross-usuário — implementar antes evita escrever consultas de `transactions` sem a peça central da regra de negócio "consolidado vs. detalhe completo". |
-| 7 | **`open-finance` (Pluggy)** | Fonte de dados para `Account`/`Card`/`Transaction` reais (Open Finance); implementar o fluxo de conexão (`createOpenFinanceConnection`, sync) antes dos módulos que leem esses dados evita popular `accounts`/`cards`/`transactions` só com dados manuais/mock durante o desenvolvimento. |
-| 8 | **`accounts` / `cards` / `transactions`** | Dependem de `open-finance` (passo 7, para dados reais) e `sharing-permissions` (passo 6, para filtrar visibilidade); são o núcleo de valor do produto, implementados juntos porque compartilham a mesma regra de "dono vs. compartilhado" e o mesmo `hiddenFromFamily`. |
-| 9 | **`recurring-expenses` / `categories`** | Dependem de `Family` (passo 5) e `Category` já ter seed (passo 1); são funcionalidades complementares (compromissos manuais, taxonomia) que não bloqueiam nem são bloqueadas pelo fluxo de Open Finance, por isso vêm depois do núcleo. |
-| 10 | **`audit-log`** | Tecnicamente pode ser implementado mais cedo (nenhuma dependência de dados), mas é colocado aqui porque o `AuditLogInterceptor` precisa que as mutations de todos os módulos anteriores já existam para saber quais eventos de fato disparar (`FAMILY_CREATED`, `SHARING_PERMISSION_UPDATED`, `OPEN_FINANCE_REVOKED` etc.) — implementar por último evita reescrever o mapeamento de eventos a cada novo módulo adicionado. |
-| 11 | **Testes de integração (Supertest + schema real) e snapshot do SDL (`schema.graphql`)** | Só fazem sentido cobrindo o schema GraphQL completo e estável; rodar antes disso geraria retrabalho constante de atualizar os testes a cada novo type/mutation adicionado nos passos 5-10. |
+| #   | Passo                                                                                                                                            | Justificativa (dependências)                                                                                                                                                                                                                                                                                                                                                                                                |
+| --- | ------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | **Prisma schema + migrations** (`prisma/schema.prisma` copiado de `01-DATA-MODEL.md §2`, `prisma migrate dev`, seed de `Category`/`Institution`) | Todo o resto depende do client Prisma gerado e das tabelas existirem; nenhum service pode ser escrito sem os tipos do `@prisma/client`.                                                                                                                                                                                                                                                                                     |
+| 2   | **`PrismaModule`/`PrismaService`**                                                                                                               | Provider global consumido por todos os módulos subsequentes — precisa existir antes de qualquer `*.service.ts`.                                                                                                                                                                                                                                                                                                             |
+| 3   | **`auth` (JWKS guard + JIT provisioning do `User`)**                                                                                             | Nenhum resolver pode ser testado/exercitado sem um usuário autenticado válido; `AbilityFactory` (passo 4) depende de `req.user` já populado pelo guard. Ver `common/jwt-auth-guard.md`.                                                                                                                                                                                                                                     |
+| 4   | **`casl` (`AbilityFactory`) + guards globais (`JwtAuthGuard`, `PoliciesGuard`, `GraphQLExceptionFilter`, `ValidationPipe`)**                     | Autorização e tratamento de erro são transversais a todos os módulos de domínio; implementá-los antes evita retrabalho de "adicionar guard depois" em cada resolver já escrito. Ver `common/casl-ability-factory.md` e `common/exception-filter.md`.                                                                                                                                                                        |
+| 5   | **`family`**                                                                                                                                     | Primeiro módulo de domínio porque `familyId` é pré-requisito de autorização (RBAC) para praticamente todos os demais módulos (compartilhamento, despesas recorrentes, etc.) — sem `Family`/`FamilyMember`, a `AbilityFactory` não tem o que consultar. Ver `modules/family/`.                                                                                                                                               |
+| 6   | **`sharing-permissions`**                                                                                                                        | Depende de `Family` existir (passo 5) e é pré-requisito para que `accounts`/`cards`/`transactions` (passo 8) saibam decidir visibilidade cross-usuário — implementar antes evita escrever consultas de `transactions` sem a peça central da regra de negócio "consolidado vs. detalhe completo".                                                                                                                            |
+| 7   | **`open-finance` (Pluggy)**                                                                                                                      | Fonte de dados para `Account`/`Card`/`Transaction` reais (Open Finance); implementar o fluxo de conexão (`createOpenFinanceConnection`, sync) antes dos módulos que leem esses dados evita popular `accounts`/`cards`/`transactions` só com dados manuais/mock durante o desenvolvimento.                                                                                                                                   |
+| 8   | **`accounts` / `cards` / `transactions`**                                                                                                        | Dependem de `open-finance` (passo 7, para dados reais) e `sharing-permissions` (passo 6, para filtrar visibilidade); são o núcleo de valor do produto, implementados juntos porque compartilham a mesma regra de "dono vs. compartilhado" e o mesmo `hiddenFromFamily`.                                                                                                                                                     |
+| 9   | **`recurring-expenses` / `categories`**                                                                                                          | Dependem de `Family` (passo 5) e `Category` já ter seed (passo 1); são funcionalidades complementares (compromissos manuais, taxonomia) que não bloqueiam nem são bloqueadas pelo fluxo de Open Finance, por isso vêm depois do núcleo.                                                                                                                                                                                     |
+| 10  | **`audit-log`**                                                                                                                                  | Tecnicamente pode ser implementado mais cedo (nenhuma dependência de dados), mas é colocado aqui porque o `AuditLogInterceptor` precisa que as mutations de todos os módulos anteriores já existam para saber quais eventos de fato disparar (`FAMILY_CREATED`, `SHARING_PERMISSION_UPDATED`, `OPEN_FINANCE_REVOKED` etc.) — implementar por último evita reescrever o mapeamento de eventos a cada novo módulo adicionado. |
+| 11  | **Testes de integração (Supertest + schema real) e snapshot do SDL (`schema.graphql`)**                                                          | Só fazem sentido cobrindo o schema GraphQL completo e estável; rodar antes disso geraria retrabalho constante de atualizar os testes a cada novo type/mutation adicionado nos passos 5-10.                                                                                                                                                                                                                                  |
 
 ---
 
@@ -340,9 +353,21 @@ type User implements Node {
   families: [FamilyMembership!]!
 }
 
+# ATUALIZADO: `avatarUrl` do input virou `avatarPath` — o client nunca monta
+# a URL final; o path é obtido via `createAvatarUploadUrl` (abaixo) e
+# validado no backend como prefixado pelo próprio userId. `User.avatarUrl`
+# (acima) continua se chamando assim no ObjectType, mas passou a ser
+# resolvido como uma signed READ URL de curta duração computada on-demand a
+# partir do path salvo — nunca um path cru nem URL pública fixa. Ver
+# `specs/security/file-uploads.md` e `00-DECISIONS.md §12`.
 input CompleteProfileInput {
   displayName: String!
-  avatarUrl: String
+  avatarPath: String
+}
+
+type AvatarUploadUrlPayload {
+  uploadUrl: String!
+  path: String!
 }
 
 type Query {
@@ -351,6 +376,7 @@ type Query {
 
 type Mutation {
   completeUserProfile(input: CompleteProfileInput!): User!
+  createAvatarUploadUrl(mimeType: String!): AvatarUploadUrlPayload!
   requestAccountDeletion: Boolean!
   exportMyData: DataExportPayload!
 }
@@ -369,12 +395,12 @@ type DataExportPayload {
 - **Regras de evolução:**
   - Novos campos/tipos: sempre opcionais (`nullable`) ou com valor padrão sensato ao serem adicionados a inputs existentes.
   - Remoção de campo: **nunca direta**. Marcar com `@deprecated(reason: "Use X em vez disso. Remoção planejada para vX.")`, manter por no mínimo 2 ciclos de release do app mobile (considerando que apps antigos continuam em uso até o usuário atualizar), só então remover.
-  - Mudança de tipo de um campo existente (ex.: `String` → `ID`) é tratada como *breaking change* e exige um novo campo com nome diferente, nunca alterar o campo in-place.
+  - Mudança de tipo de um campo existente (ex.: `String` → `ID`) é tratada como _breaking change_ e exige um novo campo com nome diferente, nunca alterar o campo in-place.
   - Enums: adicionar novos valores é seguro; remover valor existente é breaking change — igual tratamento de deprecação.
 - **Snapshot do SDL em CI:** o schema completo é exportado e versionado em `packages/graphql-schema/schema.graphql` — fonte única do contrato, consumida tanto por `apps/api` quanto pelos tipos gerados de `packages/graphql-types` para `apps/mobile` (`00-DECISIONS.md §11`; snapshot em si já previsto em `00-DECISIONS.md`, seção 8 — Testes/Contrato). Pipeline de CI (GitHub Actions):
   1. Gera o SDL atual a partir do código de `apps/api` (`nest build` + introspecção ou `@nestjs/graphql` com `autoSchemaFile`).
-  2. Compara com o `packages/graphql-schema/schema.graphql` commitado usando uma ferramenta de *schema diff* (ex.: `graphql-inspector diff`).
-  3. Se houver *breaking change* não anotado como intencional (ex.: remoção de campo sem depreciação prévia, mudança de tipo), o build falha.
+  2. Compara com o `packages/graphql-schema/schema.graphql` commitado usando uma ferramenta de _schema diff_ (ex.: `graphql-inspector diff`).
+  3. Se houver _breaking change_ não anotado como intencional (ex.: remoção de campo sem depreciação prévia, mudança de tipo), o build falha.
   4. Se aprovado, o novo `packages/graphql-schema/schema.graphql` é commitado como parte do PR (revisão humana obrigatória de qualquer diff de schema), e `packages/graphql-types` é regenerado a partir dele.
 - **Documentação:** descriptions (`"""..."""`) em todos os types/fields relevantes do SDL, servidas automaticamente via introspecção nas ferramentas de client (Apollo Studio/GraphiQL) — cobre o requisito de "documentação completa da API" do item 11 de `CLAUDE.md`.
 
@@ -385,7 +411,7 @@ type DataExportPayload {
 Pontos não cobertos explicitamente pelos documentos lidos, resolvidos aqui pela opção mais simples/conservadora — nenhuma contradiz decisão já tomada (consolidado de `02-API-AUTH.md` e `06-BACKEND-IMPLEMENTATION-GUIDE.md`):
 
 1. **Confirmação de e-mail obrigatória no cadastro** (`confirm email` habilitado no Supabase) antes do primeiro login — assumido como boa prática padrão de segurança.
-2. **Criação do registro `User` local via *just-in-time provisioning*** na primeira requisição autenticada (em vez de webhook `auth.users` do Supabase) — evita depender de webhook adicional no MVP.
+2. **Criação do registro `User` local via _just-in-time provisioning_** na primeira requisição autenticada (em vez de webhook `auth.users` do Supabase) — evita depender de webhook adicional no MVP.
 3. **Chave de rate limiting por `userId`** quando autenticado (em vez de apenas IP) — ver `common/rate-limiting.md`.
 4. **Regra de "não remover o último ADMIN de uma família"** — assumida como salvaguarda de produto, ver `modules/family/remove-member.md`.
 5. **Prazo de expiração de convites de família:** assumido 7 dias (`FamilyInvite.expiresAt`).

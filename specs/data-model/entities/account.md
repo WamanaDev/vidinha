@@ -44,6 +44,8 @@ enum AccountType {
   CHECKING        // conta corrente
   SAVINGS         // poupança
   INVESTMENT
+  CASH            // "Carteira" — dinheiro em espécie; sempre isManual, sem connectionId
+  CRYPTO          // "Carteira digital" — criptoativos; sempre isManual, sem connectionId
   OTHER
 }
 ```
@@ -56,7 +58,7 @@ enum AccountType {
 | `ownerId`          | `String` (FK)                 | Usuário dono da conta. Toda conta pertence sempre a um `User`, nunca diretamente a uma `Family`.                                                                                      |
 | `connectionId`     | `String?` (FK)                | Conexão Open Finance de origem; nulo quando a conta foi cadastrada manualmente (`isManual = true`).                                                                                   |
 | `pluggyAccountId`  | `String?` único               | Id da conta no Pluggy (`PluggyAccount.id`) — chave natural usada para upsert idempotente ao sincronizar (`OpenFinanceService#syncAccountsAndTransactions`); nulo para contas manuais. |
-| `type`             | `AccountType`                 | Tipo da conta: `CHECKING` (corrente), `SAVINGS` (poupança), `INVESTMENT` ou `OTHER`.                                                                                                  |
+| `type`             | `AccountType`                 | Tipo da conta: `CHECKING` (corrente), `SAVINGS` (poupança), `INVESTMENT`, `CASH` ("Carteira" — dinheiro em espécie), `CRYPTO` ("Carteira digital" — criptoativos) ou `OTHER`.         |
 | `name`             | `String`                      | Nome de exibição da conta (ex.: "Conta Corrente Nubank").                                                                                                                             |
 | `maskedNumber`     | `String?`                     | Identificador não sensível (últimos 4 dígitos ou similar) — nunca o número completo da conta.                                                                                         |
 | `currency`         | `String` (default `"BRL"`)    | Moeda da conta. Campo existe para permitir futura extensão multi-moeda, mas hoje usa sempre o default `BRL` (ver suposição A6 em [../00-overview.md](../00-overview.md)).             |
@@ -78,6 +80,8 @@ enum AccountType {
 ## 4. Regras de Negócio
 
 - Não existe `familyId` direto em `Account` — a visibilidade por família é sempre derivada via `SharingPermission` (ver seção 3.1 de [../00-overview.md](../00-overview.md)).
+- `CASH`/`CRYPTO` são sempre `isManual: true` e `connectionId: null` — não existe integração Open Finance para dinheiro em espécie ou criptoativos; reaproveitam 100% da infraestrutura de saldo/compartilhamento/transação já existente em vez de novas entidades (ver `00-DECISIONS.md §12`).
+- Conta manual (`isManual: true`) é editável/arquivável apenas pelo próprio dono, via `createAccount`/`updateAccount`/`archiveAccount` (`accounts.module.md`). Conta sincronizada via Open Finance (`isManual: false`) é somente leitura, exceto compartilhamento (`updateAccountSharing`).
 - `maskedNumber` nunca deve conter o número completo da conta (requisito de segurança/privacidade, alinhado a `claude.md §22`/LGPD).
 - Uma conta compartilhada com uma família via `SharingPermission` (`resourceType = ACCOUNT`) pode ter transações individuais ocultas por `Transaction.hiddenFromFamily`, independentemente do compartilhamento da conta em si (ver [transaction.md](transaction.md)).
 - Índice `[ownerId, archivedAt]` cobre a query "contas ativas de um usuário" (ver tabela de índices em [../00-overview.md](../00-overview.md) §6).

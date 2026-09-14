@@ -61,21 +61,21 @@ enum TransactionSource {
 
 ## 2. Explicação dos Campos
 
-| Campo | Tipo | Explicação |
-|---|---|---|
-| `id` | `String` (PK, `uuid()`) | Identificador único da transação. |
-| `accountId` | `String?` (FK) | Conta de origem, quando aplicável. Exatamente um entre `accountId`/`cardId` deve estar preenchido — regra validada na camada de serviço, não no schema. |
-| `cardId` | `String?` (FK) | Cartão de origem, quando aplicável. |
-| `categoryId` | `String?` (FK) | Categoria da transação, opcional. |
-| `description` | `String` | Descrição da movimentação. |
-| `amount` | `Decimal(14,2)` | Valor da transação. |
-| `type` | `TransactionType` | `DEBIT` ou `CREDIT`. |
-| `source` | `TransactionSource` (default `MANUAL`) | Origem da transação: `OPEN_FINANCE` (sincronização Pluggy), `MANUAL` (lançamento do usuário) ou `RECURRING_EXPENSE` (gerada a partir de uma despesa recorrente vencida). |
-| `externalId` | `String?` | Identificador da transação no Pluggy, usado para deduplicação em re-sync. |
-| `occurredAt` | `DateTime` | Data/hora em que a movimentação ocorreu. |
-| `hiddenFromFamily` | `Boolean` (default `false`) | Oculta a transação de toda e qualquer visão da família, mesmo que a conta/cartão esteja compartilhado — ver seção 4 abaixo e seção 3 de [../00-overview.md](../00-overview.md). |
-| `createdAt` | `DateTime` | Data de criação do registro. |
-| `updatedAt` | `DateTime` | Atualizado automaticamente a cada alteração. |
+| Campo              | Tipo                                   | Explicação                                                                                                                                                                      |
+| ------------------ | -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `id`               | `String` (PK, `uuid()`)                | Identificador único da transação.                                                                                                                                               |
+| `accountId`        | `String?` (FK)                         | Conta de origem, quando aplicável. Exatamente um entre `accountId`/`cardId` deve estar preenchido — regra validada na camada de serviço, não no schema.                         |
+| `cardId`           | `String?` (FK)                         | Cartão de origem, quando aplicável.                                                                                                                                             |
+| `categoryId`       | `String?` (FK)                         | Categoria da transação, opcional.                                                                                                                                               |
+| `description`      | `String`                               | Descrição da movimentação.                                                                                                                                                      |
+| `amount`           | `Decimal(14,2)`                        | Valor da transação.                                                                                                                                                             |
+| `type`             | `TransactionType`                      | `DEBIT` ou `CREDIT`.                                                                                                                                                            |
+| `source`           | `TransactionSource` (default `MANUAL`) | Origem da transação: `OPEN_FINANCE` (sincronização Pluggy), `MANUAL` (lançamento do usuário) ou `RECURRING_EXPENSE` (gerada a partir de uma despesa recorrente vencida).        |
+| `externalId`       | `String?`                              | Identificador da transação no Pluggy, usado para deduplicação em re-sync.                                                                                                       |
+| `occurredAt`       | `DateTime`                             | Data/hora em que a movimentação ocorreu.                                                                                                                                        |
+| `hiddenFromFamily` | `Boolean` (default `false`)            | Oculta a transação de toda e qualquer visão da família, mesmo que a conta/cartão esteja compartilhado — ver seção 4 abaixo e seção 3 de [../00-overview.md](../00-overview.md). |
+| `createdAt`        | `DateTime`                             | Data de criação do registro.                                                                                                                                                    |
+| `updatedAt`        | `DateTime`                             | Atualizado automaticamente a cada alteração.                                                                                                                                    |
 
 ## 3. Relações
 
@@ -90,10 +90,11 @@ enum TransactionSource {
 - **Flag `hiddenFromFamily` (regra central de privacidade da transação):**
   - É um campo booleano por transação, independente do compartilhamento da conta/cartão.
   - Mesmo que a `Account`/`Card` esteja com `SharingPermission` ativa (com ou sem `allowFullDetail`) para uma família, qualquer `Transaction` com `hiddenFromFamily = true` é excluída de **toda e qualquer visão da família**, incluindo os totais consolidados por categoria — não entra nem no extrato detalhado nem no somatório.
-  - Só o `ownerId` da conta/cartão dono da transação pode alterar essa flag; a alteração é um evento auditado (`AuditAction.TRANSACTION_HIDDEN_TOGGLED`, ver [audit-log.md](audit-log.md)).
+  - Só o `ownerId` da conta/cartão dono da transação pode alterar essa flag. **Nota:** ao contrário do CRUD manual (`createTransaction`/`updateTransaction`/`deleteTransaction`, que emite `AuditLog`), a mutation `hideTransaction`/`updateTransactionCategory` **não** emite evento de auditoria — `AuditAction` não tem um `TRANSACTION_HIDDEN_TOGGLED` e a implementação real (`transactions.service.ts`) não audita essa alteração, conforme `transactions.module.md §2`.
   - Transações com `hiddenFromFamily = false` (padrão) seguem a regra normal de `SharingPermission.allowFullDetail`: se `false`, a transação entra apenas no agregado consolidado por categoria/mês exibido à família, nunca linha a linha.
 - Índices cobrem: extrato de conta por período, fatura de cartão por período, totais por categoria por período, deduplicação de sync, e filtro de visibilidade compartilhada (ver seção 6 de [../00-overview.md](../00-overview.md)).
-- Não possui soft-delete próprio — é removida em cascata apenas quando a `Account`/`Card` pai é de fato excluída (fluxo de exclusão total de conta de usuário).
+- Não possui soft-delete próprio; além da remoção em cascata quando a `Account`/`Card` pai é excluída, uma transação `source: MANUAL` pode ser apagada diretamente pelo dono via `deleteTransaction` (hard delete, sem retenção — transações `OPEN_FINANCE`/`RECURRING_EXPENSE` não podem ser apagadas assim, apenas via exclusão da conta/cartão de origem).
+- **Lançamento manual e importação de extrato:** `createTransaction`/`updateTransaction`/`deleteTransaction` (`transactions.module.md`) exigem que a `Account`/`Card` alvo pertença ao chamador e seja `isManual: true`. A importação de extrato (planilha/CSV) reaproveita `createTransaction` chamada sequencialmente por linha já validada no app — o servidor nunca recebe o arquivo bruto (ver `00-DECISIONS.md §12`).
 
 ## 5. Justificativa de Modelagem
 
