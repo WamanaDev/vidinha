@@ -70,6 +70,40 @@ input UpdateTransactionCategoryInput {
   categoryId: ID!
 }
 
+# SUPOSIÇÃO: `createTransaction`/`updateTransaction`/`deleteTransaction` foram
+# adicionadas ao contrato (ausentes no rascunho original) — lançamento manual
+# de transação para contas/cartões `isManual: true`, incluindo as usadas pela
+# importação de extrato/CSV (parse client-side, o app só chama
+# `createTransaction` linha a linha; ver `00-DECISIONS.md §12`).
+input CreateTransactionInput {
+  # Exatamente um entre accountId/cardId deve ser informado — validado no
+  # service (`assertExactlyOneTarget`), não expresso no SDL.
+  accountId: ID
+  cardId: ID
+  categoryId: ID
+  description: String!
+  amount: Float!
+  type: TransactionType!
+  occurredAt: DateTime!
+}
+
+# SUPOSIÇÃO: não é possível mover a transação para outra conta/cartão
+# (accountId/cardId não fazem parte deste input) — ver justificativa em
+# `apps/api/src/modules/transactions/dto/update-transaction.input.ts`.
+input UpdateTransactionInput {
+  id: ID!
+  description: String
+  amount: Float
+  type: TransactionType
+  occurredAt: DateTime
+  categoryId: ID
+}
+
+enum TransactionType {
+  DEBIT
+  CREDIT
+}
+
 type Query {
   transactions(
     filter: TransactionFilterInput!
@@ -81,7 +115,12 @@ type Query {
 
 type Mutation {
   hideTransaction(input: HideTransactionInput!): Transaction!
-  updateTransactionCategory(input: UpdateTransactionCategoryInput!): Transaction!
+  updateTransactionCategory(
+    input: UpdateTransactionCategoryInput!
+  ): Transaction!
+  createTransaction(input: CreateTransactionInput!): Transaction!
+  updateTransaction(input: UpdateTransactionInput!): Transaction!
+  deleteTransaction(id: ID!): Boolean!
 }
 ```
 
@@ -95,7 +134,8 @@ Paginação **cursor-based estilo Relay** (`edges`/`node`/`pageInfo`), conforme 
 - Detalhe transação-a-transação só é visível a não-donos quando `Account.fullDetailShared = true` (ver [`../accounts/accounts.module.md`](../accounts/accounts.module.md)); sem isso, não-donos só veem valores consolidados (totais por categoria/mês) — a resolução exata de "consolidado" fica a cargo de queries agregadas ainda não especificadas no SDL atual (candidatas a relatórios, `00-DECISIONS.md §1`: "relatório mensal simples por categoria").
 - **Recomenda-se usar `@casl/prisma` (`accessibleBy(ability)`)** para traduzir a ability diretamente em cláusula `where` do Prisma na query `transactions`, evitando buscar registros que o usuário não pode ver e depois filtrar em memória (defesa em profundidade + performance) — ver [`../../common/casl-ability-factory.md §3`](../../common/casl-ability-factory.md).
 - Categorização: MVP inclui categorização manual (`updateTransactionCategory`) + sugestão simples por regras (merchant → categoria); categorização 100% automática via ML é adiada para v2 (`00-DECISIONS.md §1`).
-- Alteração de `hiddenFromFamily`/categoria não está na lista de eventos obrigatoriamente auditados de `00-DECISIONS.md §9` (que cobre família/permissões/Open Finance/conta de usuário) — não é necessário emitir `AuditLog` para essas mutations, diferente de `sharing-permissions`.
+- Alteração de `hiddenFromFamily`/categoria não está na lista de eventos obrigatoriamente auditados de `00-DECISIONS.md §9` (que cobre família/permissões/Open Finance/conta de usuário) — não é necessário emitir `AuditLog` para essas mutations, diferente de `sharing-permissions`. **`hideTransaction`/`updateTransactionCategory` não emitem `AuditLog`** (implementação real, `transactions.service.ts`); isso é diferente das mutations de CRUD manual abaixo, que emitem `TRANSACTION_CREATED`/`TRANSACTION_UPDATED`/`TRANSACTION_DELETED` (ver `00-DECISIONS.md §9`).
+- **CRUD manual (`createTransaction`/`updateTransaction`/`deleteTransaction`):** só permitido quando a `Account`/`Card` alvo é `isManual: true` e pertence ao chamador (mesma regra de posse de `accounts.module.md`/`cards.module.md`). `deleteTransaction` só apaga transação `source: MANUAL` — transações `OPEN_FINANCE`/`RECURRING_EXPENSE` nunca podem ser apagadas diretamente, apenas via exclusão/arquivamento da conta/cartão de origem. Cada uma dessas três mutations atualiza o saldo (`Account.balance`) ou a fatura (`Card.currentInvoice`) da conta/cartão associado de forma atômica (`prisma.$transaction`), e emite evento de auditoria.
 
 ## 3. Estrutura de arquivos esperada (seguindo o padrão `family`)
 
