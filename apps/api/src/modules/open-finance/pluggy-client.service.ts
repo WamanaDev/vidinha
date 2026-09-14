@@ -1,6 +1,10 @@
 import { Injectable, Logger } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
-import { UpstreamErrorAppException } from "@common/errors/app.exceptions";
+import {
+  BadUserInputAppException,
+  ConflictAppException,
+  UpstreamErrorAppException,
+} from "@common/errors/app.exceptions";
 
 const PLUGGY_BASE_URL = "https://api.pluggy.ai";
 
@@ -10,6 +14,20 @@ const PLUGGY_BASE_URL = "https://api.pluggy.ai";
 // decodificar o JWT (evita depender de uma lib de decode só para isso), conforme
 // permitido pelo contrato do módulo (open-finance.module.md §2).
 const API_KEY_TTL_MS = 110 * 60 * 1000;
+
+export interface PluggyItemError {
+  code: string;
+  message: string;
+  providerMessage?: string;
+  attributes?: Record<string, unknown>;
+}
+
+export interface PluggyItemUserAction {
+  type: string;
+  instructions: string;
+  attributes?: Record<string, unknown>;
+  expiresAt?: string;
+}
 
 export interface PluggyItem {
   id: string;
@@ -21,7 +39,14 @@ export interface PluggyItem {
     type: string;
   };
   status: string;
+  executionStatus?: string;
   lastUpdatedAt?: string;
+  /** Presente quando o item entrou em estado de erro (LOGIN_ERROR, etc). Nunca contém credenciais. */
+  error?: PluggyItemError;
+  /** Presente quando o Pluggy está aguardando um valor de MFA — descreve QUAL credencial pedir agora. */
+  parameter?: PluggyConnectorCredential;
+  /** Presente em fluxos de device authorization (ex.: QR code / autorização no app do banco). */
+  userAction?: PluggyItemUserAction;
 }
 
 export interface PluggyAccount {
@@ -31,6 +56,50 @@ export interface PluggyAccount {
   number?: string;
   balance: number;
   currencyCode: string;
+}
+
+export interface PluggyConnectorCredentialOption {
+  value: string;
+  label: string;
+}
+
+export interface PluggyConnectorCredential {
+  name: string;
+  label: string;
+  type: string;
+  placeholder?: string;
+  validation?: string;
+  validationMessage?: string;
+  optional?: boolean;
+  instructions?: string;
+  options?: PluggyConnectorCredentialOption[];
+}
+
+export interface PluggyConnectorHealth {
+  status: string;
+}
+
+export interface PluggyConnector {
+  id: number;
+  name: string;
+  imageUrl?: string;
+  primaryColor?: string;
+  type: string;
+  country: string;
+  credentials: PluggyConnectorCredential[];
+  hasMFA: boolean;
+  oauth: boolean;
+  oauthUrl?: string;
+  health?: PluggyConnectorHealth;
+  isOpenFinance: boolean;
+  isSandbox: boolean;
+}
+
+export interface CreateItemOptions {
+  webhookUrl?: string;
+  clientUserId?: string;
+  oauthRedirectUri?: string;
+  products?: string[];
 }
 
 /**
@@ -72,31 +141,64 @@ export class PluggyClientService {
     return this.cachedApiKey.key;
   }
 
-  /** Cria um connect token de curta duração para inicializar o widget Pluggy Connect no client. */
-  async createConnectToken(
-    clientUserId?: string,
-  ): Promise<{ connectToken: string; expiresAt: Date }> {
+  /**
+   * Lista os conectores (instituições) disponíveis para conexão direta via API
+   * (substitui o widget Pluggy Connect — ver open-finance.module.md).
+   */
+  async listConnectors(
+    filters: { countries?: string[]; sandbox?: boolean } = {},
+  ): Promise<PluggyConnector[]> {
     const apiKey = await this.getApiKey();
-    const response = await this.request<{ accessToken: string }>(
-      "/connect_token",
+    const params = new URLSearchParams();
+    params.set("countries", JSON.stringify(filters.countries ?? ["BR"]));
+    if (filters.sandbox !== undefined) {
+      params.set("sandbox", String(filters.sandbox));
+    }
+
+    const response = await this.request<{ results: PluggyConnector[] }>(
+      `/connectors?${params.toString()}`,
+      { method: "GET", headers: { "X-API-KEY": apiKey } },
+    );
+    return response.results;
+  }
+
+  /**
+   * Cria um `Item` (conexão bancária) diretamente via API, repassando as
+   * credenciais coletadas pelo formulário nativo do app. NUNCA logar
+   * `parameters` (contém credenciais bancárias em texto puro) — nem aqui, nem
+   * no helper `requestItemMutation`.
+   */
+  async createItem(
+    connectorId: number,
+    parameters: Record<string, string>,
+    options: CreateItemOptions = {},
+  ): Promise<PluggyItem> {
+    const apiKey = await this.getApiKey();
+    return this.requestItemMutation("/items", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-API-KEY": apiKey },
+      body: JSON.stringify({ connectorId, parameters, ...options }),
+    });
+  }
+
+  /**
+   * Envia o valor de MFA solicitado pelo Pluggy para um item em
+   * `WAITING_USER_INPUT`. NUNCA logar `mfaParameters` (contém o código/valor
+   * de segundo fator em texto puro).
+   */
+  async sendItemMfa(
+    itemId: string,
+    mfaParameters: Record<string, string>,
+  ): Promise<PluggyItem> {
+    const apiKey = await this.getApiKey();
+    return this.requestItemMutation(
+      `/items/${encodeURIComponent(itemId)}/mfa`,
       {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "X-API-KEY": apiKey,
-        },
-        body: JSON.stringify(clientUserId ? { clientUserId } : {}),
+        headers: { "Content-Type": "application/json", "X-API-KEY": apiKey },
+        body: JSON.stringify(mfaParameters),
       },
     );
-
-    // SUPOSIÇÃO: a documentação pública do Pluggy não fixa um TTL exato para o
-    // connect token no corpo da resposta — usamos 30min, TTL conservador e
-    // usual para tokens de inicialização de widget (o usuário completa o fluxo
-    // de conexão bancária dentro desse tempo).
-    return {
-      connectToken: response.accessToken,
-      expiresAt: new Date(Date.now() + 30 * 60 * 1000),
-    };
   }
 
   async getItem(itemId: string): Promise<PluggyItem> {
@@ -135,6 +237,66 @@ export class PluggyClientService {
       },
       body: JSON.stringify({}),
     });
+  }
+
+  /**
+   * Variante de `request()` usada por `createItem`/`sendItemMfa`: mapeia os
+   * erros de negócio conhecidos do Pluggy (`codeDescription`) para exceções
+   * mais específicas do que o `UpstreamErrorAppException` genérico. Assim
+   * como `request()`, NUNCA loga `init.body` (que contém as credenciais
+   * enviadas) — apenas status HTTP e o `codeDescription` (metadado do
+   * Pluggy, não contém valores de credencial).
+   */
+  private async requestItemMutation(
+    path: string,
+    init: RequestInit,
+  ): Promise<PluggyItem> {
+    let response: Response;
+    try {
+      response = await fetch(`${PLUGGY_BASE_URL}${path}`, init);
+    } catch (error) {
+      this.logger.error(
+        `Falha ao comunicar com o Pluggy (${path})`,
+        error as Error,
+      );
+      throw new UpstreamErrorAppException();
+    }
+
+    if (!response.ok) {
+      let body: { codeDescription?: string; message?: string } | undefined;
+      try {
+        body = (await response.json()) as
+          { codeDescription?: string; message?: string } | undefined;
+      } catch {
+        // corpo de erro não é JSON válido — segue com body undefined
+      }
+
+      this.logger.error(
+        `Pluggy API respondeu ${response.status} em ${path} (codeDescription=${body?.codeDescription ?? "desconhecido"})`,
+      );
+
+      if (body?.codeDescription === "CONNECTOR_VALIDATION_ERROR") {
+        throw new BadUserInputAppException(
+          "Uma ou mais credenciais informadas são inválidas para esta instituição.",
+        );
+      }
+      if (body?.codeDescription === "ITEM_USER_ALREADY_EXISTS") {
+        throw new ConflictAppException(
+          "Já existe uma conexão em andamento para esta instituição com estas credenciais.",
+        );
+      }
+      throw new UpstreamErrorAppException();
+    }
+
+    try {
+      return (await response.json()) as PluggyItem;
+    } catch (error) {
+      this.logger.error(
+        `Falha ao interpretar resposta do Pluggy (${path})`,
+        error as Error,
+      );
+      throw new UpstreamErrorAppException();
+    }
   }
 
   /**

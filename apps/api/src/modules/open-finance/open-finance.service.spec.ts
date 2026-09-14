@@ -5,6 +5,7 @@ import { PrismaService } from "@prisma-module/prisma.service";
 import { AuditLogService } from "@modules/audit-log/audit-log.service";
 import { AccountsService } from "@modules/accounts/accounts.service";
 import {
+  BadUserInputAppException,
   ForbiddenAppException,
   NotFoundAppException,
 } from "@common/errors/app.exceptions";
@@ -26,7 +27,9 @@ describe("OpenFinanceService", () => {
     getItem: jest.Mock;
     deleteItem: jest.Mock;
     triggerItemUpdate: jest.Mock;
-    createConnectToken: jest.Mock;
+    listConnectors: jest.Mock;
+    createItem: jest.Mock;
+    sendItemMfa: jest.Mock;
   };
   let auditLog: { record: jest.Mock };
   let accountsService: { toEntity: jest.Mock };
@@ -34,6 +37,7 @@ describe("OpenFinanceService", () => {
   const userId = "user-1";
   const otherUserId = "user-2";
   const connectionId = "connection-1";
+  const familyId = "family-1";
 
   beforeEach(async () => {
     prisma = {
@@ -50,7 +54,9 @@ describe("OpenFinanceService", () => {
       getItem: jest.fn(),
       deleteItem: jest.fn(),
       triggerItemUpdate: jest.fn(),
-      createConnectToken: jest.fn(),
+      listConnectors: jest.fn(),
+      createItem: jest.fn(),
+      sendItemMfa: jest.fn(),
     };
     auditLog = { record: jest.fn() };
     accountsService = { toEntity: jest.fn() };
@@ -68,11 +74,47 @@ describe("OpenFinanceService", () => {
     service = moduleRef.get(OpenFinanceService);
   });
 
-  describe("createConnection", () => {
-    it("busca o item no Pluggy, faz upsert da instituição e cria a conexão, registrando auditoria", async () => {
-      pluggyClient.getItem.mockResolvedValue({
+  describe("createItem", () => {
+    it("lança FORBIDDEN quando o usuário não é membro ativo da família", async () => {
+      prisma.familyMember.findUnique.mockResolvedValue(null);
+
+      await expect(
+        service.createItem(userId, {
+          familyId,
+          connectorId: 123,
+          parameters: [{ name: "user", value: "joao" }],
+        }),
+      ).rejects.toBeInstanceOf(ForbiddenAppException);
+
+      expect(pluggyClient.createItem).not.toHaveBeenCalled();
+    });
+
+    it("lança FORBIDDEN quando o membro foi removido da família (removedAt preenchido)", async () => {
+      prisma.familyMember.findUnique.mockResolvedValue({
+        userId,
+        familyId,
+        removedAt: new Date(),
+      });
+
+      await expect(
+        service.createItem(userId, {
+          familyId,
+          connectorId: 123,
+          parameters: [{ name: "user", value: "joao" }],
+        }),
+      ).rejects.toBeInstanceOf(ForbiddenAppException);
+    });
+
+    it("cria o item no Pluggy, persiste a conexão e registra auditoria sem vazar credenciais", async () => {
+      prisma.familyMember.findUnique.mockResolvedValue({
+        userId,
+        familyId,
+        removedAt: null,
+      });
+      pluggyClient.createItem.mockResolvedValue({
         id: "pluggy-item-1",
-        status: "UPDATED",
+        status: "UPDATING",
+        executionStatus: "CREATED",
         connector: {
           id: 123,
           name: "Banco Teste",
@@ -80,6 +122,127 @@ describe("OpenFinanceService", () => {
           primaryColor: "#000",
           type: "PERSONAL_BANK",
         },
+      });
+      prisma.institution.upsert.mockResolvedValue({
+        id: "institution-1",
+        name: "Banco Teste",
+      });
+      prisma.openFinanceConnection.upsert.mockResolvedValue({
+        id: connectionId,
+        userId,
+        status: ConnectionStatus.UPDATING,
+        lastSyncedAt: null,
+        createdAt: new Date(),
+        institution: {
+          id: "institution-1",
+          name: "Banco Teste",
+          imageUrl: null,
+        },
+        accounts: [],
+      });
+
+      const result = await service.createItem(userId, {
+        familyId,
+        connectorId: 123,
+        parameters: [
+          { name: "user", value: "joao" },
+          { name: "password", value: "super-secreto" },
+        ],
+      });
+
+      expect(pluggyClient.createItem).toHaveBeenCalledWith(123, {
+        user: "joao",
+        password: "super-secreto",
+      });
+      expect(prisma.institution.upsert).toHaveBeenCalled();
+      expect(prisma.openFinanceConnection.upsert).toHaveBeenCalled();
+      expect(auditLog.record).toHaveBeenCalledWith(
+        expect.objectContaining({
+          actorId: userId,
+          action: AuditAction.OPEN_FINANCE_CONNECTED,
+          metadata: expect.objectContaining({
+            connectorId: 123,
+            itemId: "pluggy-item-1",
+          }),
+        }),
+      );
+
+      // Nenhuma credencial deve vazar para o audit log.
+      const auditCallArg = auditLog.record.mock.calls[0][0];
+      expect(JSON.stringify(auditCallArg)).not.toContain("super-secreto");
+
+      expect(result.connection.institutionName).toBe("Banco Teste");
+      expect(result.status).toBe("UPDATING");
+      expect(result.executionStatus).toBe("CREATED");
+    });
+
+    it("propaga BadUserInputAppException quando o Pluggy reporta CONNECTOR_VALIDATION_ERROR", async () => {
+      prisma.familyMember.findUnique.mockResolvedValue({
+        userId,
+        familyId,
+        removedAt: null,
+      });
+      pluggyClient.createItem.mockRejectedValue(
+        new BadUserInputAppException("Credenciais inválidas."),
+      );
+
+      await expect(
+        service.createItem(userId, {
+          familyId,
+          connectorId: 123,
+          parameters: [{ name: "user", value: "joao" }],
+        }),
+      ).rejects.toBeInstanceOf(BadUserInputAppException);
+
+      expect(prisma.openFinanceConnection.upsert).not.toHaveBeenCalled();
+      expect(auditLog.record).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("sendItemMfa", () => {
+    const pluggyItemId = "pluggy-item-1";
+
+    it("lança NotFoundAppException quando não existe conexão para o itemId", async () => {
+      prisma.openFinanceConnection.findUnique.mockResolvedValue(null);
+
+      await expect(
+        service.sendItemMfa(userId, {
+          itemId: pluggyItemId,
+          parameters: [{ name: "token", value: "123456" }],
+        }),
+      ).rejects.toBeInstanceOf(NotFoundAppException);
+
+      expect(pluggyClient.sendItemMfa).not.toHaveBeenCalled();
+    });
+
+    it("lança ForbiddenAppException quando o usuário não é dono da conexão", async () => {
+      prisma.openFinanceConnection.findUnique.mockResolvedValue({
+        id: connectionId,
+        userId,
+        pluggyItemId,
+      });
+
+      await expect(
+        service.sendItemMfa(otherUserId, {
+          itemId: pluggyItemId,
+          parameters: [{ name: "token", value: "123456" }],
+        }),
+      ).rejects.toBeInstanceOf(ForbiddenAppException);
+
+      expect(pluggyClient.sendItemMfa).not.toHaveBeenCalled();
+    });
+
+    it("envia o MFA, atualiza a conexão e registra auditoria sem vazar o valor de MFA", async () => {
+      prisma.openFinanceConnection.findUnique.mockResolvedValue({
+        id: connectionId,
+        userId,
+        pluggyItemId,
+      });
+      pluggyClient.sendItemMfa.mockResolvedValue({
+        id: pluggyItemId,
+        status: "UPDATED",
+        executionStatus: "SUCCESS",
+        connector: { id: 123, name: "Banco Teste", type: "PERSONAL_BANK" },
       });
       prisma.institution.upsert.mockResolvedValue({
         id: "institution-1",
@@ -99,20 +262,53 @@ describe("OpenFinanceService", () => {
         accounts: [],
       });
 
-      const result = await service.createConnection(userId, {
-        itemId: "pluggy-item-1",
+      const result = await service.sendItemMfa(userId, {
+        itemId: pluggyItemId,
+        parameters: [{ name: "token", value: "123456" }],
       });
 
-      expect(pluggyClient.getItem).toHaveBeenCalledWith("pluggy-item-1");
-      expect(prisma.institution.upsert).toHaveBeenCalled();
-      expect(prisma.openFinanceConnection.upsert).toHaveBeenCalled();
-      expect(auditLog.record).toHaveBeenCalledWith(
-        expect.objectContaining({
-          actorId: userId,
-          action: AuditAction.OPEN_FINANCE_CONNECTED,
-        }),
-      );
-      expect(result.institutionName).toBe("Banco Teste");
+      expect(pluggyClient.sendItemMfa).toHaveBeenCalledWith(pluggyItemId, {
+        token: "123456",
+      });
+      expect(result.status).toBe("UPDATED");
+      expect(result.connection.status).toBe(ConnectionStatus.CONNECTED);
+
+      const auditCallArg = auditLog.record.mock.calls[0][0];
+      expect(JSON.stringify(auditCallArg)).not.toContain("123456");
+    });
+  });
+
+  describe("listConnectors", () => {
+    it("filtra por Brasil e repassa includeSandbox ao PluggyClientService", async () => {
+      pluggyClient.listConnectors.mockResolvedValue([
+        {
+          id: 1,
+          name: "Banco Teste",
+          type: "PERSONAL_BANK",
+          country: "BR",
+          credentials: [
+            {
+              name: "user",
+              label: "Usuário",
+              type: "text",
+              optional: false,
+            },
+          ],
+          hasMFA: false,
+          oauth: false,
+          isOpenFinance: true,
+          isSandbox: false,
+        },
+      ]);
+
+      const result = await service.listConnectors(true);
+
+      expect(pluggyClient.listConnectors).toHaveBeenCalledWith({
+        countries: ["BR"],
+        sandbox: true,
+      });
+      expect(result).toHaveLength(1);
+      expect(result[0].name).toBe("Banco Teste");
     });
   });
 

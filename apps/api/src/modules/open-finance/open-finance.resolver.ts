@@ -1,24 +1,35 @@
 import { Resolver, Query, Mutation, Args, ID } from "@nestjs/graphql";
 import { UseGuards } from "@nestjs/common";
 import { CurrentUser } from "@common/decorators/current-user.decorator";
-import { ThrottleOpenFinanceSync } from "@common/decorators/throttle-named.decorator";
+import {
+  ThrottleAuthSensitive,
+  ThrottleOpenFinanceSync,
+} from "@common/decorators/throttle-named.decorator";
 import { PoliciesGuard } from "@common/guards/policies.guard";
 import { AuthUser } from "@common/types/auth-user.type";
 import { OpenFinanceService } from "./open-finance.service";
-import { CreateOpenFinanceConnectionInput } from "./dto/create-open-finance-connection.input";
+import { CreateOpenFinanceItemInput } from "./dto/create-open-finance-item.input";
+import { SendOpenFinanceItemMfaInput } from "./dto/send-open-finance-item-mfa.input";
 import { OpenFinanceConnection } from "./entities/open-finance-connection.entity";
-import { PluggyConnectToken } from "./entities/pluggy-connect-token.entity";
+import { OpenFinanceConnector } from "./entities/open-finance-connector.entity";
+import { OpenFinanceItemResult } from "./entities/open-finance-item-result.entity";
 
 @Resolver(() => OpenFinanceConnection)
 @UseGuards(PoliciesGuard) // JwtAuthGuard já é global (ver app.module.ts); este guard só resolve CASL
 export class OpenFinanceResolver {
   constructor(private readonly openFinanceService: OpenFinanceService) {}
 
-  @Query(() => PluggyConnectToken)
-  async pluggyConnectToken(
-    @CurrentUser() user: AuthUser,
-  ): Promise<PluggyConnectToken> {
-    return this.openFinanceService.createConnectToken(user.userId);
+  /**
+   * Lista as instituições disponíveis para conexão direta via API (substitui
+   * o widget Pluggy Connect). `includeSandbox` default `false` — o app só
+   * deve pedir `true` explicitamente em builds de desenvolvimento/QA.
+   */
+  @Query(() => [OpenFinanceConnector])
+  async openFinanceConnectors(
+    @Args("includeSandbox", { type: () => Boolean, nullable: true })
+    includeSandbox?: boolean,
+  ): Promise<OpenFinanceConnector[]> {
+    return this.openFinanceService.listConnectors(includeSandbox ?? false);
   }
 
   @Query(() => [OpenFinanceConnection])
@@ -32,12 +43,29 @@ export class OpenFinanceResolver {
     );
   }
 
-  @Mutation(() => OpenFinanceConnection)
-  async createOpenFinanceConnection(
+  // SUPOSIÇÃO: sem `@CheckAbility()` aqui — a checagem de "membro ativo da
+  // família" é feita diretamente no service
+  // (`assertActiveFamilyMemberOrForbidden`), assim como o restante do módulo
+  // (ver `revokeOpenFinanceConnection` abaixo e convenção 2.3 de
+  // specs/backend/00-overview.md). `@ThrottleAuthSensitive()` é aplicado
+  // porque esta mutation efetivamente repassa uma tentativa de login bancário
+  // à Pluggy — sem rate limit aqui, o nosso backend vira proxy de força bruta.
+  @ThrottleAuthSensitive()
+  @Mutation(() => OpenFinanceItemResult)
+  async createOpenFinanceItem(
     @CurrentUser() user: AuthUser,
-    @Args("input") input: CreateOpenFinanceConnectionInput,
-  ): Promise<OpenFinanceConnection> {
-    return this.openFinanceService.createConnection(user.userId, input);
+    @Args("input") input: CreateOpenFinanceItemInput,
+  ): Promise<OpenFinanceItemResult> {
+    return this.openFinanceService.createItem(user.userId, input);
+  }
+
+  @ThrottleAuthSensitive()
+  @Mutation(() => OpenFinanceItemResult)
+  async sendOpenFinanceItemMfa(
+    @CurrentUser() user: AuthUser,
+    @Args("input") input: SendOpenFinanceItemMfaInput,
+  ): Promise<OpenFinanceItemResult> {
+    return this.openFinanceService.sendItemMfa(user.userId, input);
   }
 
   @ThrottleOpenFinanceSync()
