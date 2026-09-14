@@ -133,7 +133,7 @@ describe("PluggyClientService", () => {
   });
 
   describe("listConnectors", () => {
-    it('envia countries=["BR"] por padrão e repassa sandbox quando informado', async () => {
+    it("envia countries=BR (form/explode:false, não JSON) por padrão e repassa sandbox quando informado", async () => {
       mockAuth();
       fetchMock.mockResolvedValueOnce({
         ok: true,
@@ -146,7 +146,11 @@ describe("PluggyClientService", () => {
       expect(result).toEqual([{ id: 1, name: "Banco Teste" }]);
       const [url] = fetchMock.mock.calls[1];
       expect(url).toContain("/connectors?");
-      expect(decodeURIComponent(url)).toContain('countries=["BR"]');
+      // A API do Pluggy usa serialização form/explode:false para arrays
+      // (`countries=BR`, não `countries=["BR"]`) — o formato JSON faz a API
+      // devolver silenciosamente uma lista vazia, sem erro.
+      expect(decodeURIComponent(url)).toContain("countries=BR");
+      expect(decodeURIComponent(url)).not.toContain('countries=["BR"]');
       expect(decodeURIComponent(url)).toContain("sandbox=true");
     });
   });
