@@ -26,12 +26,14 @@ export class CreateOpenFinanceItemInput {
   /**
    * Credenciais coletadas pelo formulário nativo, uma por
    * `ConnectorCredential.name` retornado pela query `openFinanceConnectors`.
-   * Nunca vazio — rejeitamos criação de item sem nenhuma credencial.
+   * Pode ser vazio: alguns conectores reais da Pluggy (ex.: "MeuPluggy",
+   * `credentials: []`) não pedem nenhuma credencial de formulário — a
+   * conexão é criada e sincronizada diretamente. Rejeitar array vazio aqui
+   * bloquearia esses conectores por completo.
    */
   @Field(() => [CredentialParameterInput])
   @ValidateNested({ each: true })
   @Type(() => CredentialParameterInput)
-  @ArrayMinSize(1)
   @ArrayMaxSize(20)
   parameters!: CredentialParameterInput[];
 }
