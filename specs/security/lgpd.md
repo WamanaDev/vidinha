@@ -6,25 +6,27 @@
 
 ## 1. Mapeamento de dados pessoais e financeiros coletados
 
-| Categoria de dado | Exemplos | Base legal provável | Controlador/Operador |
-|---|---|---|---|
-| Identificação básica | Nome, e-mail, telefone (opcional) | Execução de contrato (uso do app) | Vidinha = controlador |
-| Credenciais/autenticação | Hash de senha, tokens OAuth, status de MFA | Execução de contrato + legítimo interesse (segurança) | Supabase = operador |
-| Dados financeiros agregados (Open Finance) | Saldos, transações, limites de cartão, instituição vinculada | Consentimento explícito (fluxo Pluggy Connect) | Pluggy = operador; Vidinha = controlador dos dados recebidos |
-| Dados de família/compartilhamento | Estrutura da família, papéis, permissões de compartilhamento, categorias | Execução de contrato | Vidinha = controlador |
-| Dados de uso/telemetria | Logs de acesso, eventos de auditoria, erros (Sentry) | Legítimo interesse (segurança, antifraude, suporte) | Vidinha = controlador; Sentry = operador |
-| Dados de convite | E-mail/telefone de pessoa convidada (ainda não usuário) | Legítimo interesse / execução de contrato pré-contratual | Vidinha = controlador |
+| Categoria de dado                          | Exemplos                                                                 | Base legal provável                                                | Controlador/Operador                                         |
+| ------------------------------------------ | ------------------------------------------------------------------------ | ------------------------------------------------------------------ | ------------------------------------------------------------ |
+| Identificação básica                       | Nome, e-mail, telefone (opcional)                                        | Execução de contrato (uso do app)                                  | Vidinha = controlador                                        |
+| Credenciais/autenticação                   | Hash de senha, tokens OAuth, status de MFA                               | Execução de contrato + legítimo interesse (segurança)              | Supabase = operador                                          |
+| Dados financeiros agregados (Open Finance) | Saldos, transações, limites de cartão, instituição vinculada             | Consentimento explícito (formulário nativo do app + API do Pluggy) | Pluggy = operador; Vidinha = controlador dos dados recebidos |
+| Dados de família/compartilhamento          | Estrutura da família, papéis, permissões de compartilhamento, categorias | Execução de contrato                                               | Vidinha = controlador                                        |
+| Dados de uso/telemetria                    | Logs de acesso, eventos de auditoria, erros (Sentry)                     | Legítimo interesse (segurança, antifraude, suporte)                | Vidinha = controlador; Sentry = operador                     |
+| Dados de convite                           | E-mail/telefone de pessoa convidada (ainda não usuário)                  | Legítimo interesse / execução de contrato pré-contratual           | Vidinha = controlador                                        |
 
-**Dados que o Vidinha explicitamente NÃO coleta/armazena:** PAN completo de cartão, CVV, senha bancária/credenciais de Internet Banking (o consentimento e captura de credenciais ocorrem inteiramente na superfície do Pluggy Connect, fora do app Vidinha).
+**Credenciais bancárias (usuário/senha/MFA de Internet Banking) — ATUALIZADO:** ao contrário do que esta seção afirmava antes, o Vidinha **processa** essas credenciais: são capturadas em telas nativas do próprio app (não mais na superfície isolada do widget Pluggy Connect) e repassadas diretamente ao backend, que as encaminha para a API do Pluggy (`POST /items`/`POST /items/{id}/mfa`) por HTTPS. **Nunca são persistidas** — não vão para o banco de dados, não aparecem em log/audit log, não são guardadas em armazenamento local do app (nem AsyncStorage, nem SecureStore) — trafegam só em memória entre o formulário e a chamada de rede, e são descartadas imediatamente após. Mesmo assim, isso é uma mudança de superfície de responsabilidade sobre um dado sensível (de "nunca vemos" para "vemos, mas não guardamos") que **precisa de validação jurídica formal antes de operar com usuários reais em produção** — o aviso do topo desta página se aplica com força redobrada a este ponto específico. **Continua não coletado/armazenado:** PAN completo de cartão, CVV.
 
 ## 2. Direitos do titular — mutations GraphQL
 
 **`exportMyData`**
+
 - Fluxo: usuário autenticado solicita → job assíncrono compila todos os dados de que é titular (perfil, famílias em que participa — apenas os dados que ele próprio inseriu/possui, não dados privados de outros membros, — permissões de compartilhamento criadas por ele, transações de contas próprias) → gera JSON/CSV → disponibiliza link de download temporário (expira em 72h) enviado por e-mail via Supabase.
 - Prazo alvo: processamento em até 15 dias corridos (prazo exato **a confirmar com jurídico** conforme prazos da LGPD para atendimento de requisições).
 - Auditoria: evento de exportação registrado em `AuditLog`.
 
 **`requestAccountDeletion`**
+
 - Fluxo: usuário solicita exclusão → confirmação (ex.: reautenticação ou e-mail de confirmação) → conta marcada `PENDING_DELETION` com prazo de carência (ex.: 7 dias para arrependimento, cancelável pelo próprio usuário) → após o prazo, processo de exclusão/anonimização executa.
 - **O que é excluído:** credenciais de autenticação (via Supabase Admin API), dados de perfil (nome, e-mail, telefone), conexões Open Finance ativas (revogadas junto ao Pluggy).
 - **O que é anonimizado (não excluído fisicamente):** transações e registros que também pertencem a outros membros da família (ex.: uma transação em conta compartilhada visível a outros) — o vínculo com o usuário excluído é substituído por um identificador anônimo, preservando a integridade do histórico compartilhado para os demais membros.

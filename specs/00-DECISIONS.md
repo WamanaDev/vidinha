@@ -25,10 +25,10 @@ Este documento é a fonte da verdade para todos os outros documentos em `specs/`
 ## 2. Open Finance
 
 - **Provedor:** **Pluggy** (agregador brasileiro, Open Finance + bancos tradicionais, sandbox gratuito).
-- Integração via **Pluggy Connect** (widget/SDK) do lado do app, backend NestJS consome a API do Pluggy para buscar contas, cartões e transações após o `itemId` ser criado.
+- Integração via chamadas diretas à **API REST do Pluggy** (`POST /items`, `POST /items/{id}/mfa`, `GET /connectors`) a partir de telas nativas do app — **não** usa mais o widget hospedado Pluggy Connect (decisão revertida; ver nota de compliance abaixo). Backend NestJS repassa as credenciais coletadas pelo formulário nativo diretamente para o Pluggy e consome a API para buscar contas, cartões e transações após o `itemId` ser criado.
 - Dados importados no MVP: contas, saldos, cartões (limite/fatura, sem PAN completo), transações (últimos 12 meses conforme disponibilidade do provedor).
 - Sincronização: **webhook** do Pluggy (`item/updated`) + fallback de sync manual (pull-to-refresh) + job diário de reconciliação.
-- Consentimento: fluxo do próprio Pluggy Connect (tela nativa do provedor) — Vidinha nunca vê credenciais bancárias do usuário.
+- **Consentimento (revisado):** a captura de credenciais bancárias (usuário/senha/MFA) agora acontece em telas nativas do próprio app Vidinha, não mais na superfície isolada do widget Pluggy Connect. As credenciais **nunca são persistidas** (nem em banco, nem em log, nem em armazenamento local do app) — trafegam só em memória entre o formulário e a chamada à API do Pluggy — mas o Vidinha **passou a processá-las diretamente**, o que muda a superfície de responsabilidade sobre esse dado sensível em relação à decisão original acima. **Pendente:** revisão jurídica/DPA com a Pluggy e atualização de `specs/security/lgpd.md` para refletir essa mudança antes de operar com usuários reais em produção — não é suficiente que o código esteja correto, a base legal documentada precisa ser realinhada.
 - Revogação: usuário pode desconectar uma instituição a qualquer momento na tela "Conexões"; isso dispara `DELETE /items/{id}` no Pluggy e marca a conexão como `REVOKED` (soft-delete, mantém histórico de transações já importadas conforme política de retenção).
 - **PCI-DSS:** como o Vidinha nunca recebe PAN completo, CVV ou dados brutos de tarifa (apenas dados agregados via Pluggy), o escopo de PCI-DSS é tratado como **fora do perímetro direto do Vidinha**; a obrigação de conformidade recai sobre o Pluggy e as instituições financeiras. **Validar contratualmente com o Pluggy** antes de produção.
 
@@ -50,46 +50,46 @@ Este documento é a fonte da verdade para todos os outros documentos em `specs/`
 
 - **Identidade:** **Supabase Auth** (email/senha + Google OAuth + Apple Sign-In — Apple é obrigatório na App Store sempre que há login social).
 - Fluxo mobile: Expo `AuthSession` com **PKCE** para os logins sociais; Supabase emite os tokens.
-- **JWT:** access token de curta duração (~1h) emitido pelo Supabase; o NestJS atua como *resource server* validando a assinatura via JWKS do Supabase (sem reimplementar emissão de token).
+- **JWT:** access token de curta duração (~1h) emitido pelo Supabase; o NestJS atua como _resource server_ validando a assinatura via JWKS do Supabase (sem reimplementar emissão de token).
 - **Refresh token:** gerenciado pelo Supabase SDK, com rotação automática; armazenado no dispositivo via **Expo SecureStore** (nunca AsyncStorage puro).
 - **Revogação/logout:** invalidação de sessão via Supabase (`signOut({ scope: 'global' })` para logout de todos os dispositivos).
 - **MFA:** TOTP via Supabase Auth MFA, opcional para todos os usuários no MVP; obrigatório para admins de família é candidato para v2.
-- **Autorização (dados):** RBAC (`ADMIN`/`MEMBER`) + regras ABAC via **CASL**, avaliadas nos *resolvers* do GraphQL (ex.: "usuário só acessa transação se pertence a conta própria OU conta compartilhada com sua família E categoria não estiver oculta").
+- **Autorização (dados):** RBAC (`ADMIN`/`MEMBER`) + regras ABAC via **CASL**, avaliadas nos _resolvers_ do GraphQL (ex.: "usuário só acessa transação se pertence a conta própria OU conta compartilhada com sua família E categoria não estiver oculta").
 
 ## 6. Segurança Mobile (MASVS)
 
 - **Decisão do usuário: SSL Pinning e ofuscação já entram no MVP** (maior custo de manutenção aceito desde o início).
 - SSL Pinning: pinning de chave pública (não de certificado, para sobreviver a renovação de certificado) via biblioteca de config plugin do Expo (ex. `react-native-ssl-public-key-pinning`), o que exige **EAS Build com Dev Client customizado** (não roda no Expo Go).
-- Estratégia de rotação: manter **2 pins ativos simultaneamente** (atual + próximo) com no mínimo 60 dias de antecedência antes de trocar o certificado do backend; pin de emergência (*backup pin*) sempre configurado.
+- Estratégia de rotação: manter **2 pins ativos simultaneamente** (atual + próximo) com no mínimo 60 dias de antecedência antes de trocar o certificado do backend; pin de emergência (_backup pin_) sempre configurado.
 - Fallback de falha de pinning: bloquear chamadas de rede com mensagem de erro clara + forçar atualização via **EAS Update**/loja se o pin precisar mudar fora do calendário.
 - Ofuscação: Hermes (bytecode, padrão RN/Expo) + ProGuard/R8 habilitado no build Android release; strip de símbolos de debug no iOS. JS bundle minificado pelo Metro em produção.
 - Secure Storage: tokens, refresh tokens e qualquer dado sensível **somente** em Expo SecureStore.
 
 ## 7. Infraestrutura (custo zero)
 
-| Camada | Escolha | Motivo |
-|---|---|---|
-| API GraphQL (NestJS) | **Vercel** (Serverless Functions, runtime Node) | Um único ecossistema para API + futura web, deploy automático por push, preview por PR gratuito |
-| Banco de dados | **Supabase Postgres (Free)** | Postgres gerenciado, Auth incluso, região BR |
-| Autenticação | **Supabase Auth (Free)** | Evita reimplementar auth/MFA/OAuth do zero |
-| Mobile build/distribuição | **Expo EAS (Free tier)** | Builds gerenciados, OTA update, dev client custom para SSL pinning |
-| Open Finance | **Pluggy (Sandbox/Free)** | Ver seção 2 |
-| CI/CD | **GitHub Actions (Free)** | Lint → typecheck → testes → build; dispara EAS Build via CLI |
-| Observabilidade/erros | **Sentry (Free tier)** | Error tracking backend + mobile |
-| Cache/Rate limit store | Em memória (`@nestjs/throttler`) no MVP; migrar para **Upstash Redis (Free)** quando houver mais de 1 instância | Evita custo até ser necessário |
-| Backup externo | **Cloudflare R2 (Free tier, 10GB)** | Guarda dump semanal do Postgres |
-| WAF/borda | Proteções padrão da Vercel Edge no MVP; **Cloudflare (Free)** na frente do domínio customizado quando houver domínio próprio | Sem custo adicional |
-| Domínio | A definir pelo usuário (não incluso no free tier) | Fora do escopo de "zero custo" — compra pontual |
+| Camada                    | Escolha                                                                                                                      | Motivo                                                                                          |
+| ------------------------- | ---------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| API GraphQL (NestJS)      | **Vercel** (Serverless Functions, runtime Node)                                                                              | Um único ecossistema para API + futura web, deploy automático por push, preview por PR gratuito |
+| Banco de dados            | **Supabase Postgres (Free)**                                                                                                 | Postgres gerenciado, Auth incluso, região BR                                                    |
+| Autenticação              | **Supabase Auth (Free)**                                                                                                     | Evita reimplementar auth/MFA/OAuth do zero                                                      |
+| Mobile build/distribuição | **Expo EAS (Free tier)**                                                                                                     | Builds gerenciados, OTA update, dev client custom para SSL pinning                              |
+| Open Finance              | **Pluggy (Sandbox/Free)**                                                                                                    | Ver seção 2                                                                                     |
+| CI/CD                     | **GitHub Actions (Free)**                                                                                                    | Lint → typecheck → testes → build; dispara EAS Build via CLI                                    |
+| Observabilidade/erros     | **Sentry (Free tier)**                                                                                                       | Error tracking backend + mobile                                                                 |
+| Cache/Rate limit store    | Em memória (`@nestjs/throttler`) no MVP; migrar para **Upstash Redis (Free)** quando houver mais de 1 instância              | Evita custo até ser necessário                                                                  |
+| Backup externo            | **Cloudflare R2 (Free tier, 10GB)**                                                                                          | Guarda dump semanal do Postgres                                                                 |
+| WAF/borda                 | Proteções padrão da Vercel Edge no MVP; **Cloudflare (Free)** na frente do domínio customizado quando houver domínio próprio | Sem custo adicional                                                                             |
+| Domínio                   | A definir pelo usuário (não incluso no free tier)                                                                            | Fora do escopo de "zero custo" — compra pontual                                                 |
 
 - **Ambientes:** `development` (local, Postgres via Docker ou branch Supabase), `staging` (Vercel Preview + 2º projeto Supabase Free), `production` (Vercel Production + projeto Supabase principal). O plano Free do Supabase permite 2 projetos ativos por organização, o que cobre staging + produção sem custo.
-- **Limitação conhecida:** Vercel Serverless tem *cold start* e limite de duração de função (10s no plano Hobby); GraphQL subscriptions (realtime) **não são suportadas** nesse arranjo — se necessário no futuro, migrar API para Render/Fly.io (ambos com free tier) ou usar Supabase Realtime diretamente.
+- **Limitação conhecida:** Vercel Serverless tem _cold start_ e limite de duração de função (10s no plano Hobby); GraphQL subscriptions (realtime) **não são suportadas** nesse arranjo — se necessário no futuro, migrar API para Render/Fly.io (ambos com free tier) ou usar Supabase Realtime diretamente.
 
 ## 8. Testes
 
 - Unitário: Jest (services, resolvers, guards CASL).
 - Integração: Supertest contra o schema GraphQL (queries/mutations reais em banco de teste).
 - E2E mobile: **Maestro** (gratuito, mais simples que Detox para Expo).
-- Contrato: snapshot do SDL do GraphQL versionado no repo (`schema.graphql`), CI falha se houver *breaking change* não intencional.
+- Contrato: snapshot do SDL do GraphQL versionado no repo (`schema.graphql`), CI falha se houver _breaking change_ não intencional.
 - Segurança: `npm audit`/`pnpm audit` + Dependabot (gratuito no GitHub) no CI.
 
 ## 9. Observabilidade e Auditoria

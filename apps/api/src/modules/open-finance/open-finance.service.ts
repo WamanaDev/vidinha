@@ -13,9 +13,13 @@ import {
   ForbiddenAppException,
   NotFoundAppException,
 } from "@common/errors/app.exceptions";
-import { PluggyClientService } from "./pluggy-client.service";
-import { CreateOpenFinanceConnectionInput } from "./dto/create-open-finance-connection.input";
+import { PluggyClientService, PluggyItem } from "./pluggy-client.service";
+import { CredentialParameterInput } from "./dto/credential-parameter.input";
+import { CreateOpenFinanceItemInput } from "./dto/create-open-finance-item.input";
+import { SendOpenFinanceItemMfaInput } from "./dto/send-open-finance-item-mfa.input";
 import { OpenFinanceConnection } from "./entities/open-finance-connection.entity";
+import { OpenFinanceConnector } from "./entities/open-finance-connector.entity";
+import { OpenFinanceItemResult } from "./entities/open-finance-item-result.entity";
 
 type ConnectionWithRelations = PrismaOpenFinanceConnection & {
   institution: PrismaInstitution;
@@ -33,9 +37,44 @@ export class OpenFinanceService {
     private readonly accountsService: AccountsService,
   ) {}
 
-  /** Token de curta duração para inicializar o widget Pluggy Connect no client. */
-  async createConnectToken(userId: string) {
-    return this.pluggyClient.createConnectToken(userId);
+  /**
+   * Lista os conectores (instituições) disponíveis para conexão direta via
+   * API — substitui o antigo widget Pluggy Connect. Filtramos sempre por
+   * Brasil; `includeSandbox` permite ao app testar contra conectores de
+   * sandbox (default: apenas conectores de produção).
+   */
+  async listConnectors(
+    includeSandbox = false,
+  ): Promise<OpenFinanceConnector[]> {
+    const connectors = await this.pluggyClient.listConnectors({
+      countries: ["BR"],
+      sandbox: includeSandbox,
+    });
+    return connectors.map((c) => ({
+      id: c.id,
+      name: c.name,
+      imageUrl: c.imageUrl,
+      primaryColor: c.primaryColor,
+      type: c.type,
+      country: c.country,
+      credentials: c.credentials.map((cred) => ({
+        name: cred.name,
+        label: cred.label,
+        type: cred.type,
+        placeholder: cred.placeholder,
+        validation: cred.validation,
+        validationMessage: cred.validationMessage,
+        optional: cred.optional ?? false,
+        instructions: cred.instructions,
+        options: cred.options,
+      })),
+      hasMFA: c.hasMFA,
+      oauth: c.oauth,
+      oauthUrl: c.oauthUrl,
+      health: c.health ? { status: c.health.status } : undefined,
+      isOpenFinance: c.isOpenFinance,
+      isSandbox: c.isSandbox,
+    }));
   }
 
   /**
@@ -68,56 +107,78 @@ export class OpenFinanceService {
   }
 
   /**
-   * Cria a conexão Open Finance a partir do `itemId` gerado pelo Pluggy
-   * Connect no client. Busca detalhes do item no Pluggy, faz upsert da
-   * `Institution` e persiste a `OpenFinanceConnection`.
+   * Cria um `Item` (conexão bancária) diretamente via API do Pluggy,
+   * repassando as credenciais coletadas pelo formulário nativo do app
+   * (substitui o fluxo antigo baseado no widget Pluggy Connect). Persiste a
+   * `OpenFinanceConnection` imediatamente, independentemente do item já ter
+   * concluído a sincronização — o app deve consultar `status`/`executionStatus`
+   * e, se necessário, chamar `sendItemMfa`.
    */
-  async createConnection(
+  async createItem(
     userId: string,
-    input: CreateOpenFinanceConnectionInput,
-  ): Promise<OpenFinanceConnection> {
-    const item = await this.pluggyClient.getItem(input.itemId);
+    input: CreateOpenFinanceItemInput,
+  ): Promise<OpenFinanceItemResult> {
+    await this.assertActiveFamilyMemberOrForbidden(input.familyId, userId);
 
-    const institution = await this.prisma.institution.upsert({
-      where: { pluggyConnectorId: item.connector.id },
-      update: {
-        name: item.connector.name,
-        imageUrl: item.connector.imageUrl,
-        primaryColor: item.connector.primaryColor,
-        type: item.connector.type,
-      },
-      create: {
-        pluggyConnectorId: item.connector.id,
-        name: item.connector.name,
-        imageUrl: item.connector.imageUrl,
-        primaryColor: item.connector.primaryColor,
-        type: item.connector.type,
+    const parameters = this.toParameterObject(input.parameters);
+    const item = await this.pluggyClient.createItem(
+      input.connectorId,
+      parameters,
+    );
+
+    const connection = await this.persistConnectionFromItem(userId, item);
+
+    // SUPOSIÇÃO: reaproveitamos `AuditAction.OPEN_FINANCE_CONNECTED` também
+    // para o caso em que o item ainda está `WAITING_USER_INPUT`/MFA pendente
+    // (não há um valor de enum mais granular no schema Prisma para "conexão
+    // iniciada, aguardando confirmação" — não inventamos um novo valor de
+    // enum, ver instrução do agente). O metadado `status` no audit log deixa
+    // claro que a conexão pode não estar totalmente ativa ainda. Nenhuma
+    // credencial é registrada (apenas connectorId/itemId/status).
+    await this.auditLog.record({
+      actorId: userId,
+      action: AuditAction.OPEN_FINANCE_CONNECTED,
+      metadata: {
+        connectorId: input.connectorId,
+        itemId: item.id,
+        status: connection.status,
       },
     });
 
-    const connection = await this.prisma.openFinanceConnection.upsert({
-      where: { pluggyItemId: item.id },
-      update: {
-        status: this.mapPluggyStatus(item.status),
-        lastSyncedAt: item.lastUpdatedAt ? new Date(item.lastUpdatedAt) : null,
-      },
-      create: {
-        userId,
-        institutionId: institution.id,
-        pluggyItemId: item.id,
-        status: this.mapPluggyStatus(item.status),
-        lastSyncedAt: item.lastUpdatedAt ? new Date(item.lastUpdatedAt) : null,
-      },
-      include: { institution: true, accounts: { include: { owner: true } } },
-    });
+    return this.toItemResult(connection, item);
+  }
+
+  /**
+   * Envia o valor de MFA solicitado pelo Pluggy (`OpenFinanceItemResult.mfaParameter`)
+   * para um item em `WAITING_USER_INPUT`. Só o dono da conexão associada ao
+   * `itemId` pode enviar o MFA (checagem de posse, mesmo padrão de
+   * `revokeConnection`/`syncConnection`).
+   */
+  async sendItemMfa(
+    userId: string,
+    input: SendOpenFinanceItemMfaInput,
+  ): Promise<OpenFinanceItemResult> {
+    await this.findOwnedConnectionByItemIdOrThrow(input.itemId, userId);
+
+    const mfaParameters = this.toParameterObject(input.parameters);
+    const item = await this.pluggyClient.sendItemMfa(
+      input.itemId,
+      mfaParameters,
+    );
+
+    const connection = await this.persistConnectionFromItem(userId, item);
 
     await this.auditLog.record({
       actorId: userId,
       action: AuditAction.OPEN_FINANCE_CONNECTED,
-      metadata: { institutionName: institution.name, itemId: item.id },
+      metadata: {
+        itemId: item.id,
+        status: connection.status,
+        mfaSubmitted: true,
+      },
     });
 
-    return await this.toEntity(connection as ConnectionWithRelations);
+    return this.toItemResult(connection, item);
   }
 
   /**
@@ -140,7 +201,7 @@ export class OpenFinanceService {
     const updated = await this.prisma.openFinanceConnection.update({
       where: { id: connection.id },
       data: {
-        status: this.mapPluggyStatus(item.status),
+        status: this.mapPluggyStatus(item),
         lastSyncedAt: item.lastUpdatedAt
           ? new Date(item.lastUpdatedAt)
           : new Date(),
@@ -196,7 +257,7 @@ export class OpenFinanceService {
     await this.prisma.openFinanceConnection.update({
       where: { id: connection.id },
       data: {
-        status: this.mapPluggyStatus(item.status),
+        status: this.mapPluggyStatus(item),
         lastSyncedAt: item.lastUpdatedAt
           ? new Date(item.lastUpdatedAt)
           : new Date(),
@@ -206,13 +267,12 @@ export class OpenFinanceService {
 
   /**
    * Registra que o item Pluggy chegou (evento de webhook `item/created`).
-   * SUPOSIÇÃO: a criação efetiva da `OpenFinanceConnection` já acontece pela
-   * mutation `createOpenFinanceConnection` (disparada pelo client logo após o
-   * Pluggy Connect concluir o fluxo) — este handler apenas audita a chegada
-   * do evento assíncrono correspondente, sem duplicar a criação. Se o registro
-   * ainda não existir quando o evento chegar (condição de corrida entre o
-   * webhook e a mutation do client), não fazemos nada aqui; a consistência
-   * final é garantida pela mutation e/ou pelo job diário de reconciliação.
+   * A criação efetiva da `OpenFinanceConnection` já acontece de forma síncrona
+   * em `createItem` (chamada direta à API, sem widget) — este handler apenas
+   * audita a chegada do evento assíncrono correspondente, sem duplicar a
+   * criação. Se o registro ainda não existir quando o evento chegar (condição
+   * de corrida), não fazemos nada aqui; a consistência final é garantida por
+   * `createItem` e/ou pelo job diário de reconciliação.
    */
   async applyWebhookCreated(pluggyItemId: string): Promise<void> {
     const connection = await this.prisma.openFinanceConnection.findUnique({
@@ -266,6 +326,107 @@ export class OpenFinanceService {
   // Helpers privados
   // ---------------------------------------------------------------------
 
+  private toParameterObject(
+    parameters: CredentialParameterInput[],
+  ): Record<string, string> {
+    const result: Record<string, string> = {};
+    for (const p of parameters) {
+      result[p.name] = p.value;
+    }
+    return result;
+  }
+
+  /**
+   * Faz upsert da `Institution` (a partir do `item.connector`) e da
+   * `OpenFinanceConnection` (a partir do `item`), reaproveitado por
+   * `createItem` e `sendItemMfa` — ambos recebem um `PluggyItem` da API e
+   * precisam refletir o estado mais recente no Postgres. NUNCA persiste
+   * `parameters`/valores de credencial (o `PluggyItem` retornado pela API do
+   * Pluggy nunca inclui isso de volta).
+   */
+  private async persistConnectionFromItem(
+    userId: string,
+    item: PluggyItem,
+  ): Promise<ConnectionWithRelations> {
+    const institution = await this.prisma.institution.upsert({
+      where: { pluggyConnectorId: item.connector.id },
+      update: {
+        name: item.connector.name,
+        imageUrl: item.connector.imageUrl,
+        primaryColor: item.connector.primaryColor,
+        type: item.connector.type,
+      },
+      create: {
+        pluggyConnectorId: item.connector.id,
+        name: item.connector.name,
+        imageUrl: item.connector.imageUrl,
+        primaryColor: item.connector.primaryColor,
+        type: item.connector.type,
+      },
+    });
+
+    const connection = await this.prisma.openFinanceConnection.upsert({
+      where: { pluggyItemId: item.id },
+      update: {
+        status: this.mapPluggyStatus(item),
+        lastSyncedAt: item.lastUpdatedAt ? new Date(item.lastUpdatedAt) : null,
+      },
+      create: {
+        userId,
+        institutionId: institution.id,
+        pluggyItemId: item.id,
+        status: this.mapPluggyStatus(item),
+        lastSyncedAt: item.lastUpdatedAt ? new Date(item.lastUpdatedAt) : null,
+      },
+      include: { institution: true, accounts: { include: { owner: true } } },
+    });
+
+    return connection as ConnectionWithRelations;
+  }
+
+  private async toItemResult(
+    connection: ConnectionWithRelations,
+    item: PluggyItem,
+  ): Promise<OpenFinanceItemResult> {
+    return {
+      connection: await this.toEntity(connection),
+      pluggyItemId: item.id,
+      status: item.status,
+      executionStatus: item.executionStatus,
+      mfaParameter: item.parameter
+        ? {
+            name: item.parameter.name,
+            label: item.parameter.label,
+            type: item.parameter.type,
+            placeholder: item.parameter.placeholder,
+            validation: item.parameter.validation,
+            validationMessage: item.parameter.validationMessage,
+            optional: item.parameter.optional ?? false,
+            instructions: item.parameter.instructions,
+            options: item.parameter.options,
+          }
+        : undefined,
+      userAction: item.userAction
+        ? {
+            type: item.userAction.type,
+            instructions: item.userAction.instructions,
+            expiresAt: item.userAction.expiresAt
+              ? new Date(item.userAction.expiresAt)
+              : undefined,
+          }
+        : undefined,
+      // Mensagem segura (nunca inclui credencial/stacktrace) — `error.message`
+      // do Pluggy descreve a falha (ex.: "Invalid credentials"), não os valores enviados.
+      errorMessage: item.error?.message,
+    };
+  }
+
+  /**
+   * Usado por `findVisibleConnections` (query de leitura pré-existente):
+   * NOT_FOUND, não FORBIDDEN — não revelar existência da família a
+   * não-membros (mesmo padrão de `family.service.ts#assertActiveMember`, ver
+   * specs/backend/common/exception-filter.md §2).
+   */
   private async assertActiveFamilyMember(
     familyId: string,
     userId: string,
@@ -275,6 +436,28 @@ export class OpenFinanceService {
     });
     if (!membership || membership.removedAt) {
       throw new NotFoundAppException("Família não encontrada.");
+    }
+  }
+
+  /**
+   * Usado por `createItem` (mutation que efetivamente repassa tentativas de
+   * login bancário à Pluggy): aqui optamos por FORBIDDEN em vez de NOT_FOUND
+   * — o `familyId` já é conhecido/escolhido pelo próprio usuário na tela do
+   * app (nunca inferido de outro recurso), então não há vazamento de
+   * existência de família a mitigar, e FORBIDDEN comunica melhor a causa real
+   * (falta de vínculo ativo) ao client. Segue instrução explícita da tarefa.
+   */
+  private async assertActiveFamilyMemberOrForbidden(
+    familyId: string,
+    userId: string,
+  ): Promise<void> {
+    const membership = await this.prisma.familyMember.findUnique({
+      where: { familyId_userId: { familyId, userId } },
+    });
+    if (!membership || membership.removedAt) {
+      throw new ForbiddenAppException(
+        "Você não pertence a esta família ou não tem permissão para esta ação.",
+      );
     }
   }
 
@@ -298,16 +481,44 @@ export class OpenFinanceService {
     return connection;
   }
 
+  private async findOwnedConnectionByItemIdOrThrow(
+    pluggyItemId: string,
+    userId: string,
+  ) {
+    const connection = await this.prisma.openFinanceConnection.findUnique({
+      where: { pluggyItemId },
+    });
+    if (!connection) {
+      throw new NotFoundAppException("Conexão não encontrada.");
+    }
+    if (connection.userId !== userId) {
+      throw new ForbiddenAppException(
+        "Somente o dono da conexão pode executar esta ação.",
+      );
+    }
+    return connection;
+  }
+
   /**
-   * SUPOSIÇÃO: mapeamento de status livre do Pluggy (`item.status`, string)
-   * para o enum fechado `ConnectionStatus` do Prisma — a doc pública do Pluggy
-   * usa strings como "UPDATED", "UPDATING", "LOGIN_ERROR", "OUTDATED", "ERROR".
-   * "UPDATED" é mapeado para `CONNECTED` (não existe status "UPDATED" no nosso
-   * enum) por ser o estado estável equivalente. Qualquer valor não reconhecido
-   * cai em `ERROR`, fail-safe.
+   * Mapeia o par `(item.status, item.executionStatus)` do Pluggy para o enum
+   * fechado `ConnectionStatus` do Prisma.
+   *
+   * SUPOSIÇÃO: a doc pública do Pluggy usa strings livres como "UPDATED",
+   * "UPDATING", "LOGIN_ERROR", "OUTDATED" para `status` — mantemos o
+   * mapeamento original por esse campo. Itens recém-criados via `POST /items`
+   * (fluxo novo, sem widget) podem chegar com um `status` ainda não
+   * "assentado" (ex.: em progresso) mas já trazer um `executionStatus`
+   * granular (CREATED, WAITING_USER_INPUT, SUCCESS, LOGIN_ERROR,
+   * INVALID_CREDENTIALS, SITE_NOT_AVAILABLE, CONNECTION_ERROR,
+   * USER_AUTHORIZATION_PENDING, USER_INPUT_TIMEOUT) — usamos esse campo como
+   * sinal auxiliar quando `status` não bate com nenhum valor conhecido.
+   * Qualquer combinação não reconhecida cai em `ERROR`, fail-safe.
    */
-  private mapPluggyStatus(pluggyStatus: string): ConnectionStatus {
-    switch (pluggyStatus) {
+  private mapPluggyStatus(item: {
+    status: string;
+    executionStatus?: string;
+  }): ConnectionStatus {
+    switch (item.status) {
       case "UPDATED":
         return ConnectionStatus.CONNECTED;
       case "UPDATING":
@@ -316,6 +527,18 @@ export class OpenFinanceService {
         return ConnectionStatus.LOGIN_ERROR;
       case "OUTDATED":
         return ConnectionStatus.OUTDATED;
+    }
+
+    switch (item.executionStatus) {
+      case "SUCCESS":
+        return ConnectionStatus.CONNECTED;
+      case "CREATED":
+      case "WAITING_USER_INPUT":
+      case "USER_AUTHORIZATION_PENDING":
+        return ConnectionStatus.UPDATING;
+      case "LOGIN_ERROR":
+      case "INVALID_CREDENTIALS":
+        return ConnectionStatus.LOGIN_ERROR;
       default:
         return ConnectionStatus.ERROR;
     }
@@ -323,9 +546,9 @@ export class OpenFinanceService {
 
   /**
    * SUPOSIÇÃO: os métodos deste service (`findVisibleConnections`,
-   * `createConnection`, `syncConnection`) não têm, em todos os casos, um
-   * contexto de família + `SharingPermission` já resolvido para as contas da
-   * conexão — por isso mapeamos cada `Account` via
+   * `createItem`, `sendItemMfa`, `syncConnection`) não têm, em todos os
+   * casos, um contexto de família + `SharingPermission` já resolvido para as
+   * contas da conexão — por isso mapeamos cada `Account` via
    * `AccountsService#toEntity` sem passar uma `SharingPermission` explícita,
    * o que resulta em `sharedWithFamily: false`/`fullDetailShared: false`
    * (opt-in nunca automático, ver 00-DECISIONS §1 — esse é o padrão seguro).
