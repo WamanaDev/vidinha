@@ -3,6 +3,7 @@ import { PrismaModule } from "@prisma-module/prisma.module";
 import { SharingPermissionsModule } from "@modules/sharing-permissions/sharing-permissions.module";
 import { AccountsModule } from "@modules/accounts/accounts.module";
 import { AuditLogModule } from "@modules/audit-log/audit-log.module";
+import { StorageModule } from "@modules/storage/storage.module";
 import { TransactionsResolver } from "./transactions.resolver";
 import { TransactionsService } from "./transactions.service";
 
@@ -12,6 +13,7 @@ import { TransactionsService } from "./transactions.service";
     SharingPermissionsModule,
     AccountsModule,
     AuditLogModule,
+    StorageModule,
   ],
   providers: [TransactionsResolver, TransactionsService],
   exports: [TransactionsService],

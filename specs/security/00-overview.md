@@ -11,24 +11,35 @@ Este conteúdo foi reestruturado em múltiplos arquivos, listados no índice aba
 ## Índice
 
 ### [asvs-checklist.md](./asvs-checklist.md) — Checklist OWASP ASVS
+
 Checklist completo de requisitos de segurança do backend NestJS, no nível ASVS 2, organizado por categoria (Autenticação, Controle de Acesso, Validação de Entrada, Criptografia, Sessões, API/GraphQL e Configuração/Logging), cada item marcado com prioridade `MVP` ou `Pós-MVP` para orientar o que é obrigatório antes do lançamento.
 
 ### [masvs-checklist.md](./masvs-checklist.md) — Checklist OWASP MASVS
+
 Checklist completo de segurança do app mobile Expo/React Native cobrindo as quatro áreas do MASVS (Storage, Crypto, Auth, Network e Resilience), incluindo requisitos como `expo-secure-store` para tokens, certificate/public-key pinning com rotação, PKCE em fluxos OAuth e proteção contra engenharia reversa (Hermes, ProGuard/R8).
 
 ### [input-validation.md](./input-validation.md) — Validação de entrada
+
 Estratégia de validação de todo Input GraphQL via `class-validator`/`class-transformer` com `ValidationPipe` global restritivo, ilustrada com dois exemplos completos de DTOs (`CreateFamilyInput` e `CreateSharingPermissionInput`), deixando claro que validação de formato é responsabilidade do DTO e validação de posse/autorização é responsabilidade do service/CASL.
 
 ### [error-handling.md](./error-handling.md) — Tratamento de erros seguro
+
 Implementação completa de um `GraphQLExceptionFilter` para NestJS que garante que stack traces, mensagens de SQL/Prisma e detalhes internos nunca cheguem ao cliente, enviando o erro completo para logs/Sentry e devolvendo apenas mensagens genéricas ou códigos de erro de uma allowlist segura.
 
 ### [lgpd.md](./lgpd.md) — LGPD
+
 Mapeamento dos dados pessoais e financeiros coletados pelo Vidinha com base legal e papel de controlador/operador de cada parte envolvida (Vidinha, Pluggy, Supabase, Sentry), além dos fluxos técnicos propostos para as mutations `exportMyData` e `requestAccountDeletion`, com aviso explícito de que os prazos e bases legais exigem validação jurídica formal.
 
+### [file-uploads.md](./file-uploads.md) — Upload de arquivos (foto de perfil)
+
+Fluxo completo de upload da foto de perfil via Supabase Storage (bucket privado `avatars`, 5MB, JPEG/PNG/WEBP): geração de URL de upload assinada (`createAvatarUploadUrl`), upload direto do client, confirmação do path em `completeUserProfile`, e cômputo sob demanda de URLs de leitura assinadas de curta duração toda vez que `avatarUrl` de um `User` é exposto no GraphQL.
+
 ### [secrets.md](./secrets.md) — Gestão de segredos (aplicação)
+
 Tabela de menor privilégio para cada segredo de aplicação (chaves do Supabase, credenciais do Pluggy, JWKS, DSN do Sentry, chave de SSL pinning, credenciais do backup), definindo onde cada um vive e quem pode consumi-lo; complementa a estratégia de secrets de CI/CD em `../infra/secrets-management.md`.
 
 ### [incident-response.md](./incident-response.md) — Plano de resposta a incidentes
+
 Plano inicial de resposta a incidentes (nível startup/MVP) com passos imediatos de contenção e preservação de evidências, matriz de comunicação (equipe interna, usuários afetados, ANPD, fornecedores) e checklist de pós-incidente, incluindo o aviso de que o prazo de notificação à ANPD ainda precisa de confirmação jurídica.
 
 ---

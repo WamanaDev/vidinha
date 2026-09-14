@@ -2,11 +2,16 @@ import { Test } from "@nestjs/testing";
 import { FamilyService } from "./family.service";
 import { PrismaService } from "@prisma-module/prisma.service";
 import { AuditLogService } from "@modules/audit-log/audit-log.service";
+import { SupabaseStorageService } from "@modules/storage/storage.service";
 import {
   ForbiddenAppException,
   NotFoundAppException,
 } from "@common/errors/app.exceptions";
 import { FamilyRole } from "@prisma/client";
+
+const storageStub = {
+  resolveAvatarUrl: jest.fn().mockResolvedValue(undefined),
+};
 
 describe("FamilyService — regra do último admin", () => {
   let service: FamilyService;
@@ -57,6 +62,7 @@ describe("FamilyService — regra do último admin", () => {
         FamilyService,
         { provide: PrismaService, useValue: prisma },
         { provide: AuditLogService, useValue: auditLog },
+        { provide: SupabaseStorageService, useValue: storageStub },
       ],
     }).compile();
 
@@ -232,6 +238,7 @@ describe("FamilyService — leaveFamily", () => {
         FamilyService,
         { provide: PrismaService, useValue: prisma },
         { provide: AuditLogService, useValue: auditLog },
+        { provide: SupabaseStorageService, useValue: storageStub },
       ],
     }).compile();
 
@@ -315,6 +322,7 @@ describe("FamilyService — createFamily", () => {
         FamilyService,
         { provide: PrismaService, useValue: prisma },
         { provide: AuditLogService, useValue: auditLog },
+        { provide: SupabaseStorageService, useValue: storageStub },
       ],
     }).compile();
 

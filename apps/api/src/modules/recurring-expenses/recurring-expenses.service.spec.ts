@@ -1,6 +1,7 @@
 import { Test } from "@nestjs/testing";
 import { RecurringExpensesService } from "./recurring-expenses.service";
 import { PrismaService } from "@prisma-module/prisma.service";
+import { SupabaseStorageService } from "@modules/storage/storage.service";
 import {
   ForbiddenAppException,
   NotFoundAppException,
@@ -20,6 +21,7 @@ describe("RecurringExpensesService", () => {
     };
     category: { findUnique: jest.Mock };
   };
+  let storage: { resolveAvatarUrl: jest.Mock };
 
   const familyId = "family-1";
   const creatorId = "creator-1";
@@ -65,11 +67,13 @@ describe("RecurringExpensesService", () => {
       },
       category: { findUnique: jest.fn() },
     };
+    storage = { resolveAvatarUrl: jest.fn().mockResolvedValue(undefined) };
 
     const moduleRef = await Test.createTestingModule({
       providers: [
         RecurringExpensesService,
         { provide: PrismaService, useValue: prisma },
+        { provide: SupabaseStorageService, useValue: storage },
       ],
     }).compile();
 

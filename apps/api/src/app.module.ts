@@ -28,6 +28,7 @@ import { CardsModule } from "@modules/cards/cards.module";
 import { TransactionsModule } from "@modules/transactions/transactions.module";
 import { RecurringExpensesModule } from "@modules/recurring-expenses/recurring-expenses.module";
 import { CategoriesModule } from "@modules/categories/categories.module";
+import { StorageModule } from "@modules/storage/storage.module";
 
 @Module({
   imports: [
@@ -50,6 +51,7 @@ import { CategoriesModule } from "@modules/categories/categories.module";
       { name: "mutation-write", ttl: 60_000, limit: 60 },
     ]),
     PrismaModule,
+    StorageModule,
     AuthModule,
     CaslModule,
     AuditLogModule,
