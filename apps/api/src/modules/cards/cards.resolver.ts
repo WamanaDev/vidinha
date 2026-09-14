@@ -1,5 +1,6 @@
 import { Resolver, Query, Mutation, Args, ID } from "@nestjs/graphql";
 import { CurrentUser } from "@common/decorators/current-user.decorator";
+import { ThrottleMutationWrite } from "@common/decorators/throttle-named.decorator";
 import { AuthUser } from "@common/types/auth-user.type";
 import { CardsService } from "./cards.service";
 import { UpdateCardSharingInput } from "./dto/update-card-sharing.input";
@@ -31,6 +32,7 @@ export class CardsResolver {
     return this.cardsService.updateSharing(user.userId, input);
   }
 
+  @ThrottleMutationWrite()
   @Mutation(() => Card)
   async createCard(
     @CurrentUser() user: AuthUser,
@@ -39,6 +41,7 @@ export class CardsResolver {
     return this.cardsService.create(user.userId, input);
   }
 
+  @ThrottleMutationWrite()
   @Mutation(() => Card)
   async updateCard(
     @CurrentUser() user: AuthUser,
@@ -47,6 +50,7 @@ export class CardsResolver {
     return this.cardsService.updateManual(user.userId, input);
   }
 
+  @ThrottleMutationWrite()
   @Mutation(() => Boolean)
   async archiveCard(
     @CurrentUser() user: AuthUser,
