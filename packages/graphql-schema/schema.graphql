@@ -201,6 +201,7 @@ type Card implements Node {
   limit: Float
   currentInvoice: Float
   dueDate: DateTime
+  connection: OpenFinanceConnection
   sharedWithFamily: Boolean!
   owner: User!
 }

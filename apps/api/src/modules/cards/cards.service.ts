@@ -10,6 +10,7 @@ import { PrismaService } from "@prisma-module/prisma.service";
 import { SharingPermissionsService } from "@modules/sharing-permissions/sharing-permissions.service";
 import { AuditLogService } from "@modules/audit-log/audit-log.service";
 import { SupabaseStorageService } from "@modules/storage/storage.service";
+import { OpenFinanceConnection } from "@modules/open-finance/entities/open-finance-connection.entity";
 import {
   ForbiddenAppException,
   NotFoundAppException,
@@ -227,6 +228,7 @@ export class CardsService {
       // data de vencimento de fatura — sempre `null` aqui (ver
       // entities/card.entity.ts).
       dueDate: undefined,
+      connection: await this.resolveConnection(card.connectionId),
       sharedWithFamily: permission ? permission.revokedAt === null : false,
       owner: {
         id: card.owner.id,
@@ -325,5 +327,31 @@ export class CardsService {
       );
     }
     return membership.familyId;
+  }
+
+  /**
+   * Resolve o `OpenFinanceConnection` (com campos mínimos) associado a um
+   * cartão, se houver — espelha `AccountsService#resolveConnection`.
+   */
+  private async resolveConnection(
+    connectionId: string | null,
+  ): Promise<OpenFinanceConnection | undefined> {
+    if (!connectionId) return undefined;
+
+    const connection = await this.prisma.openFinanceConnection.findUnique({
+      where: { id: connectionId },
+      include: { institution: true },
+    });
+    if (!connection) return undefined;
+
+    return {
+      id: connection.id,
+      institutionName: connection.institution.name,
+      institutionLogoUrl: connection.institution.imageUrl ?? undefined,
+      status: connection.status,
+      lastSyncedAt: connection.lastSyncedAt ?? undefined,
+      createdAt: connection.createdAt,
+      accounts: [],
+    };
   }
 }
