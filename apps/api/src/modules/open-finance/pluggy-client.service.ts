@@ -150,7 +150,12 @@ export class PluggyClientService {
   ): Promise<PluggyConnector[]> {
     const apiKey = await this.getApiKey();
     const params = new URLSearchParams();
-    params.set("countries", JSON.stringify(filters.countries ?? ["BR"]));
+    // A API do Pluggy usa serialização `style: form, explode: false` para
+    // parâmetros de array — isto é, valores separados por vírgula
+    // (`countries=BR`), NÃO um array serializado em JSON (`countries=["BR"]`,
+    // que a API silenciosamente interpreta como "nenhum país corresponde" e
+    // retorna uma lista vazia, sem erro).
+    params.set("countries", (filters.countries ?? ["BR"]).join(","));
     if (filters.sandbox !== undefined) {
       params.set("sandbox", String(filters.sandbox));
     }
