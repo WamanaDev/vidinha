@@ -2,6 +2,7 @@ import { ObjectType, Field, ID, registerEnumType } from "@nestjs/graphql";
 import { CardType as PrismaCardType } from "@prisma/client";
 import { Node } from "@common/types/node.interface";
 import { User } from "@auth/entities/user.entity";
+import { OpenFinanceConnection } from "@modules/open-finance/entities/open-finance-connection.entity";
 
 // SUPOSIÇÃO: o SDL de exemplo do contrato (cards.module.md §1) não expõe um
 // campo `type` em `Card`, mas o cadastro manual de cartão (accounts/cards
@@ -55,6 +56,16 @@ export class Card implements Node {
 
   @Field({ nullable: true })
   dueDate?: Date;
+
+  /**
+   * Presente quando o cartão veio de uma sincronização Open Finance;
+   * ausente (`undefined`) para cartão manual — mesma convenção de
+   * `Account.connection` (ver `accounts/entities/account.entity.ts`). O
+   * client deriva "é manual?" como `connection == null`, idêntico ao que já
+   * fazia para `Account`.
+   */
+  @Field(() => OpenFinanceConnection, { nullable: true })
+  connection?: OpenFinanceConnection;
 
   @Field()
   sharedWithFamily: boolean;

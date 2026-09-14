@@ -13,9 +13,12 @@ enum CardType {
   PREPAID
 }
 
-# SUPOSIÇÃO: `type`/`brand` foram adicionados ao ObjectType (ausentes no
-# rascunho original deste contrato) — necessários para o cadastro manual de
-# cartão (`createCard`), que precisa que o usuário informe o tipo do cartão.
+# SUPOSIÇÃO: `type`/`brand`/`connection` foram adicionados ao ObjectType
+# (ausentes no rascunho original deste contrato) — `type`/`brand` necessários
+# para o cadastro manual de cartão (`createCard`), que precisa que o usuário
+# informe o tipo do cartão; `connection` espelha `Account.connection`
+# (accounts.module.md §1) para dar ao client a mesma forma de distinguir
+# cartão manual (`connection: null`) de cartão sincronizado via Open Finance.
 type Card implements Node {
   id: ID!
   name: String!
@@ -25,6 +28,7 @@ type Card implements Node {
   limit: Float
   currentInvoice: Float
   dueDate: DateTime
+  connection: OpenFinanceConnection
   sharedWithFamily: Boolean!
   owner: User!
 }
