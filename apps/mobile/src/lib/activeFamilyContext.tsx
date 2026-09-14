@@ -12,16 +12,17 @@ import { graphqlRequest } from "./graphqlClient";
 import { secureStorage, SECURE_STORE_KEYS } from "./secureStorage";
 import { lightTokens } from "@config/theme/tokens";
 
-// SUPOSIÇÃO: o SDL exato de `myFamilies` (nomes de campo) ainda não foi lido
-// desta spec de API — assumida a forma mínima abaixo (id + name), suficiente
-// para decidir se o usuário tem família ativa e listar num FamilySwitcher
-// futuro. Ajustar quando `specs/backend`/`02-API-AUTH.md` confirmar o shape
-// definitivo; nenhuma tela além deste provider depende disso.
+// `myFamilies` retorna `FamilyMembership[]` (id da membership, não da
+// família) — o nome da família vive em `family.name`
+// (packages/graphql-schema/schema.graphql, tipo `FamilyMembership`).
 const MY_FAMILIES_QUERY = /* GraphQL */ `
   query MyFamilies {
     myFamilies {
       id
-      name
+      family {
+        id
+        name
+      }
     }
   }
 `;
@@ -32,7 +33,7 @@ interface FamilySummary {
 }
 
 interface MyFamiliesResult {
-  myFamilies: FamilySummary[];
+  myFamilies: { id: string; family: FamilySummary }[];
 }
 
 interface ActiveFamilyContextValue {
@@ -51,7 +52,7 @@ export function ActiveFamilyProvider({ children }: { children: ReactNode }) {
   );
   const [hydrated, setHydrated] = useState(false);
 
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isFetching } = useQuery({
     queryKey: ["myFamilies"],
     queryFn: () => graphqlRequest<MyFamiliesResult>(MY_FAMILIES_QUERY),
   });
@@ -68,7 +69,11 @@ export function ActiveFamilyProvider({ children }: { children: ReactNode }) {
     secureStorage.setItem(SECURE_STORE_KEYS.ACTIVE_FAMILY_ID, id);
   };
 
-  if (isLoading || !hydrated) {
+  // isLoading só cobre a primeira busca; sem checar isFetching também, uma
+  // revalidação em segundo plano (ex.: logo após criar/entrar em uma
+  // família, via invalidateQueries) ainda vê o array antigo (vazio) e manda
+  // o usuário de volta para o onboarding antes do refetch terminar.
+  if (isLoading || isFetching || !hydrated) {
     return (
       <View
         style={{
@@ -83,7 +88,7 @@ export function ActiveFamilyProvider({ children }: { children: ReactNode }) {
     );
   }
 
-  const families = data?.myFamilies ?? [];
+  const families = (data?.myFamilies ?? []).map((m) => m.family);
 
   if (families.length === 0) {
     return <Redirect href="/(onboarding)/welcome" />;

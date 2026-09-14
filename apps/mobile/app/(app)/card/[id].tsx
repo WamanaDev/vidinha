@@ -1,4 +1,5 @@
-import { ScrollView, Text, View } from "react-native";
+import { useCallback, useState } from "react";
+import { Alert, ScrollView, Text, View } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { Amount } from "@components/Amount";
 import { Button } from "@components/Button";
@@ -11,7 +12,9 @@ import { type as typeScale } from "@config/theme/typography";
 import { space } from "@config/theme/spacing";
 import { useActiveFamily } from "@lib/activeFamilyContext";
 import { useCards, findCardById } from "@features/cards/hooks/useCards";
+import { useArchiveCard } from "@features/cards/hooks/useCardActions";
 import type { GraphQLApiError } from "@lib/graphqlClient";
+import { mapErrorCodeToMessage } from "@lib/errorMapping";
 
 // specs/mobile/routes/stack/account-detail.md (§"Detalhe de cartão") — rota
 // `/(app)/card/[id]`. Não há query singular `card(id)` no SDL real — o
@@ -23,8 +26,47 @@ export default function CardDetailScreen() {
   const { familyId } = useActiveFamily();
 
   const { data, isLoading, isError, error, refetch } = useCards(familyId);
+  const archiveCard = useArchiveCard(familyId);
+  const [archiveError, setArchiveError] = useState<string | null>(null);
 
   const handleGoBack = () => router.replace("/(app)/(tabs)/cards");
+
+  const card = findCardById(data?.cards, id);
+
+  // Precisa vir antes dos `return`s condicionais abaixo (regras de hooks —
+  // claude.md/eslint `react-hooks/rules-of-hooks`).
+  const handleArchive = useCallback(() => {
+    if (!card) return;
+    // Ação destrutiva — sempre com confirmação (claude.md §"nunca destrutivo
+    // sem confirmação", mesmo padrão de `open-finance/connections.tsx`).
+    // SUPOSIÇÃO: o SDL real não expõe se um cartão é manual ou veio de uma
+    // conexão Open Finance (`Card` não tem `connection`/`isManual` no schema
+    // GraphQL, só no Prisma) — o botão fica disponível para qualquer cartão;
+    // se o backend rejeitar arquivar um cartão sincronizado, o erro do
+    // servidor é mostrado normalmente.
+    Alert.alert(
+      "Arquivar cartão",
+      `${card.name} vai deixar de aparecer nos seus cartões. Os lançamentos já feitos continuam guardados.`,
+      [
+        { text: "Cancelar", style: "cancel" },
+        {
+          text: "Arquivar",
+          style: "destructive",
+          onPress: () => {
+            setArchiveError(null);
+            archiveCard.mutate(card.id, {
+              onSuccess: handleGoBack,
+              onError: (err) =>
+                setArchiveError(
+                  mapErrorCodeToMessage((err as GraphQLApiError)?.code),
+                ),
+            });
+          },
+        },
+      ],
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [card, archiveCard]);
 
   if (isLoading) {
     return (
@@ -47,8 +89,6 @@ export default function CardDetailScreen() {
       />
     );
   }
-
-  const card = findCardById(data?.cards, id);
 
   if (!card) {
     // Estado not-found (specs/mobile/routes/stack/account-detail.md §"Estados"):
@@ -127,6 +167,26 @@ export default function CardDetailScreen() {
           variant="primary"
           fullWidth
         />
+      </View>
+
+      <View style={{ marginTop: space[3] }}>
+        <Button
+          label="Arquivar cartão"
+          onPress={handleArchive}
+          loading={archiveCard.isPending}
+          variant="destructive"
+          fullWidth
+        />
+        {archiveError ? (
+          <Text
+            style={[
+              typeScale.caption,
+              { color: tokens.state.error.fg, marginTop: space[2] },
+            ]}
+          >
+            {archiveError}
+          </Text>
+        ) : null}
       </View>
     </ScrollView>
   );

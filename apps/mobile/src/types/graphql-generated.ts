@@ -59,6 +59,30 @@ export interface TransactionOrderInput {
   [key: string]: unknown;
 }
 
+// TransactionType (SDL real, packages/graphql-schema/schema.graphql linhas
+// 467-470). `CreateTransactionInput`/`UpdateTransactionInput` — linhas
+// 457-479 — CRUD manual de lançamentos (apps/mobile/app/(app)/transaction/new.tsx).
+export type TransactionType = "DEBIT" | "CREDIT";
+
+export interface CreateTransactionInput {
+  accountId?: string | null;
+  cardId?: string | null;
+  categoryId?: string | null;
+  description: string;
+  amount: number;
+  type: TransactionType;
+  occurredAt: string;
+}
+
+export interface UpdateTransactionInput {
+  id: string;
+  description?: string;
+  amount?: number;
+  type?: TransactionType;
+  occurredAt?: string;
+  categoryId?: string | null;
+}
+
 // --- Tipos abaixo espelham o SDL real já implementado em
 // packages/graphql-schema/schema.graphql (family + open-finance), adicionados
 // para as telas de dashboard/accounts/cards/family. Mesma justificativa do
@@ -97,7 +121,10 @@ export interface FamilyPayload {
   family: Family;
 }
 
-export type AccountType = "CHECKING" | "SAVINGS" | "INVESTMENT" | "OTHER";
+// AccountType (SDL real, packages/graphql-schema/schema.graphql linhas
+// 92-99): ganhou `CASH` e `CRYPTO` além das 4 opções anteriores.
+export type AccountType =
+  "CHECKING" | "SAVINGS" | "INVESTMENT" | "CASH" | "CRYPTO" | "OTHER";
 
 // `type Account` — SDL real, packages/graphql-schema/schema.graphql. Não tem
 // `maskedNumber` (campo removido — a versão anterior deste arquivo assumia um
@@ -114,6 +141,27 @@ export interface Account {
   owner: Pick<User, "id">;
 }
 
+// `input CreateAccountInput`/`UpdateAccountInput` — SDL real
+// (packages/graphql-schema/schema.graphql linhas 404-419). Mutations
+// `createAccount`/`updateAccount`/`archiveAccount` — CRUD manual de contas
+// (apps/mobile/app/(app)/accounts/new.tsx).
+export interface CreateAccountInput {
+  familyId: string;
+  name: string;
+  type: AccountType;
+  maskedNumber?: string | null;
+  balance: number;
+  currency?: string | null;
+}
+
+export interface UpdateAccountInput {
+  id: string;
+  name?: string;
+  maskedNumber?: string | null;
+  currency?: string | null;
+  balance?: number;
+}
+
 export type ConnectionStatus =
   "CONNECTED" | "UPDATING" | "LOGIN_ERROR" | "OUTDATED" | "ERROR" | "REVOKED";
 
@@ -127,11 +175,16 @@ export interface OpenFinanceConnection {
   accounts: Account[];
 }
 
+// CardType (SDL real, packages/graphql-schema/schema.graphql linhas 203-207).
+export type CardType = "CREDIT" | "DEBIT" | "PREPAID";
+
 // `type Card` — SDL real, packages/graphql-schema/schema.graphql. Query
 // `cards(familyId: ID!): [Card!]!`.
 export interface Card {
   id: string;
   name: string;
+  type: CardType;
+  brand?: string | null;
   lastFourDigits?: string | null;
   limit?: number | null;
   currentInvoice?: number | null;
@@ -140,14 +193,118 @@ export interface Card {
   owner: Pick<User, "id">;
 }
 
-// `pluggyConnectToken` (Query) — SDL real, packages/graphql-schema/schema.graphql.
-export interface PluggyConnectToken {
-  connectToken: string;
-  expiresAt: string;
+// `input CreateCardInput`/`UpdateCardInput` — SDL real
+// (packages/graphql-schema/schema.graphql linhas 426-444). Mutations
+// `createCard`/`updateCard`/`archiveCard` — CRUD manual de cartões
+// (apps/mobile/app/(app)/cards/new.tsx).
+export interface CreateCardInput {
+  familyId: string;
+  name: string;
+  type: CardType;
+  brand?: string | null;
+  lastFourDigits?: string | null;
+  billingAccountId?: string | null;
+  creditLimit?: number | null;
+  currentInvoice?: number | null;
 }
 
-export interface CreateOpenFinanceConnectionInput {
+export interface UpdateCardInput {
+  id: string;
+  name?: string;
+  brand?: string | null;
+  lastFourDigits?: string | null;
+  billingAccountId?: string | null;
+  creditLimit?: number | null;
+  currentInvoice?: number | null;
+}
+
+// --- Tipos abaixo espelham `openFinanceConnectors` (Query) e
+// `createOpenFinanceItem`/`sendOpenFinanceItemMfa` (Mutations) do SDL REAL já
+// implementado em packages/graphql-schema/schema.graphql (linhas ~118-183,
+// 280, 328-330) pelo módulo apps/api/src/modules/open-finance/ — mesma
+// justificativa dos blocos acima (placeholder até o codegen real gerar
+// @vidinha/graphql-types).
+
+export type ConnectorCredentialType =
+  "text" | "password" | "number" | "image" | "select";
+
+export interface ConnectorCredentialOption {
+  value: string;
+  label: string;
+}
+
+export interface ConnectorCredential {
+  name: string;
+  label: string;
+  // SDL real: `String!` livre, não fechado em enum (o provedor pode
+  // introduzir um novo tipo sem quebrar o schema) — `ConnectorCredentialType`
+  // documenta os valores conhecidos hoje, mas o app trata qualquer outro
+  // valor com fallback de texto simples (ver CredentialField.tsx).
+  type: ConnectorCredentialType | (string & {});
+  placeholder?: string | null;
+  validation?: string | null;
+  validationMessage?: string | null;
+  optional: boolean;
+  instructions?: string | null;
+  options?: ConnectorCredentialOption[] | null;
+}
+
+export type ConnectorHealthStatus = "ONLINE" | "OFFLINE" | "UNSTABLE";
+
+export interface ConnectorHealth {
+  status: ConnectorHealthStatus | (string & {});
+}
+
+// `type OpenFinanceConnector` — `id` é `Int!` no SDL real (não `ID!`).
+export interface OpenFinanceConnector {
+  id: number;
+  name: string;
+  imageUrl?: string | null;
+  primaryColor?: string | null;
+  type: string;
+  country: string;
+  credentials: ConnectorCredential[];
+  hasMFA: boolean;
+  oauth: boolean;
+  oauthUrl?: string | null;
+  health?: ConnectorHealth | null;
+  isOpenFinance: boolean;
+  isSandbox: boolean;
+}
+
+export interface OpenFinanceUserAction {
+  type: string;
+  instructions: string;
+  expiresAt?: string | null;
+}
+
+// `type OpenFinanceItemResult` — retorno direto (sem wrapper `{ item }`) de
+// `createOpenFinanceItem`/`sendOpenFinanceItemMfa`. `pluggyItemId` (não
+// `connection.id`) é o "itemId" usado nas chamadas seguintes de MFA.
+export interface OpenFinanceItemResult {
+  connection: OpenFinanceConnection;
+  pluggyItemId: string;
+  status: string;
+  executionStatus?: string | null;
+  mfaParameter?: ConnectorCredential | null;
+  userAction?: OpenFinanceUserAction | null;
+  errorMessage?: string | null;
+}
+
+export interface CredentialParameterInput {
+  name: string;
+  value: string;
+}
+
+export interface CreateOpenFinanceItemInput {
+  familyId: string;
+  connectorId: number;
+  parameters: CredentialParameterInput[];
+}
+
+export interface SendOpenFinanceItemMfaInput {
   itemId: string;
+  parameters: CredentialParameterInput[];
 }
 
 // --- Tipos abaixo espelham `User`/`DataExportPayload`/`FamilyInvite` do SDL

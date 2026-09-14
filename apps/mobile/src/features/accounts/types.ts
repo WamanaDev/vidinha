@@ -18,4 +18,9 @@ export interface AccountWithInstitution {
   institutionName: string;
   institutionLogoUrl?: string | null;
   connectionId: string | null;
+  // SUPOSIÇÃO: o SDL real não expõe `Account.isManual` (só existe no Prisma —
+  // apps/api/prisma/schema.prisma). Como `connection` é nulo exatamente
+  // quando `isManual` é true (mesma regra do backend, `connectionId: String?`),
+  // derivamos aqui em vez de pedir um campo que não existe no schema GraphQL.
+  isManual: boolean;
 }

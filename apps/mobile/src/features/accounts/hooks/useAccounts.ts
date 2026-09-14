@@ -22,6 +22,7 @@ export function useAccounts(familyId: string) {
         institutionName: account.connection?.institutionName ?? "Conta manual",
         institutionLogoUrl: account.connection?.institutionLogoUrl ?? null,
         connectionId: account.connection?.id ?? null,
+        isManual: !account.connection,
       })),
     [query.data],
   );
