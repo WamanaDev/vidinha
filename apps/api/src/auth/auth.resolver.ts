@@ -6,6 +6,7 @@ import { AuthService } from "./auth.service";
 import { CompleteProfileInput } from "./dto/complete-profile.input";
 import { User } from "./entities/user.entity";
 import { DataExportPayload } from "./entities/data-export-payload.entity";
+import { AvatarUploadUrlPayload } from "./entities/avatar-upload-url-payload.entity";
 
 @Resolver(() => User)
 export class AuthResolver {
@@ -14,6 +15,21 @@ export class AuthResolver {
   @Query(() => User)
   async me(@CurrentUser() user: AuthUser): Promise<User> {
     return this.authService.me(user.userId);
+  }
+
+  /**
+   * Passo 1 do fluxo de upload de avatar (ver specs/security/file-uploads.md):
+   * gera uma URL de upload assinada de curta duração. O client faz o `PUT`
+   * do binário direto para `uploadUrl` e depois envia `path` de volta em
+   * `completeUserProfile.input.avatarPath`.
+   */
+  @ThrottleAuthSensitive()
+  @Mutation(() => AvatarUploadUrlPayload)
+  async createAvatarUploadUrl(
+    @CurrentUser() user: AuthUser,
+    @Args("mimeType") mimeType: string,
+  ): Promise<AvatarUploadUrlPayload> {
+    return this.authService.createAvatarUploadUrl(user.userId, mimeType);
   }
 
   @ThrottleAuthSensitive()

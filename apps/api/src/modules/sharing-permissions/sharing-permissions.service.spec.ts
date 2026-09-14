@@ -3,6 +3,7 @@ import { SharingPermissionsService } from "./sharing-permissions.service";
 import { PrismaService } from "@prisma-module/prisma.service";
 import { AuditLogService } from "@modules/audit-log/audit-log.service";
 import { AbilityFactory } from "@casl/ability.factory";
+import { SupabaseStorageService } from "@modules/storage/storage.service";
 import { ForbiddenAppException } from "@common/errors/app.exceptions";
 import { FamilyRole, SharableResourceType } from "@prisma/client";
 
@@ -17,6 +18,7 @@ describe("SharingPermissionsService — update", () => {
   };
   let auditLog: { record: jest.Mock };
   let abilityFactory: { createForUser: jest.Mock };
+  let storage: { resolveAvatarUrl: jest.Mock };
 
   const familyId = "family-1";
   const ownerId = "owner-1";
@@ -46,6 +48,7 @@ describe("SharingPermissionsService — update", () => {
     };
     auditLog = { record: jest.fn() };
     abilityFactory = { createForUser: jest.fn() };
+    storage = { resolveAvatarUrl: jest.fn().mockResolvedValue(undefined) };
 
     const moduleRef = await Test.createTestingModule({
       providers: [
@@ -53,6 +56,7 @@ describe("SharingPermissionsService — update", () => {
         { provide: PrismaService, useValue: prisma },
         { provide: AuditLogService, useValue: auditLog },
         { provide: AbilityFactory, useValue: abilityFactory },
+        { provide: SupabaseStorageService, useValue: storage },
       ],
     }).compile();
 

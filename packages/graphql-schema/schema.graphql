@@ -31,6 +31,11 @@ type DataExportPayload {
   expiresAt: DateTime!
 }
 
+type AvatarUploadUrlPayload {
+  uploadUrl: String!
+  path: String!
+}
+
 type FamilyMembership implements Node {
   id: ID!
   family: Family!
@@ -309,6 +314,7 @@ enum OrderDirection {
 }
 
 type Mutation {
+  createAvatarUploadUrl(mimeType: String!): AvatarUploadUrlPayload!
   completeUserProfile(input: CompleteProfileInput!): User!
   requestAccountDeletion: Boolean!
   exportMyData: DataExportPayload!
@@ -347,7 +353,7 @@ type Mutation {
 
 input CompleteProfileInput {
   displayName: String!
-  avatarUrl: String
+  avatarPath: String
 }
 
 input CreateFamilyInput {

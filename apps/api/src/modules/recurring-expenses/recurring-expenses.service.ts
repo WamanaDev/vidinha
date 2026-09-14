@@ -8,6 +8,7 @@ import {
   FamilyRole,
 } from "@prisma/client";
 import { PrismaService } from "@prisma-module/prisma.service";
+import { SupabaseStorageService } from "@modules/storage/storage.service";
 import {
   ForbiddenAppException,
   NotFoundAppException,
@@ -45,7 +46,10 @@ const MONTH_STEP_BY_FREQUENCY: Record<
  */
 @Injectable()
 export class RecurringExpensesService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly storage: SupabaseStorageService,
+  ) {}
 
   async findByFamily(
     userId: string,
@@ -59,7 +63,7 @@ export class RecurringExpensesService {
       orderBy: { createdAt: "desc" },
     });
 
-    return expenses.map((e) => this.toEntity(e));
+    return Promise.all(expenses.map((e) => this.toEntity(e)));
   }
 
   async create(
@@ -254,7 +258,9 @@ export class RecurringExpensesService {
     return candidate;
   }
 
-  private toEntity(expense: RecurringExpenseWithRelations): RecurringExpense {
+  private async toEntity(
+    expense: RecurringExpenseWithRelations,
+  ): Promise<RecurringExpense> {
     return {
       id: expense.id,
       // SUPOSIÇÃO: `Family` embutido de forma mínima (mesma convenção
@@ -296,7 +302,9 @@ export class RecurringExpensesService {
         id: expense.createdBy.id,
         email: expense.createdBy.email,
         displayName: expense.createdBy.displayName ?? undefined,
-        avatarUrl: expense.createdBy.avatarUrl ?? undefined,
+        avatarUrl: await this.storage.resolveAvatarUrl(
+          expense.createdBy.avatarUrl,
+        ),
         mfaEnabled: false,
         createdAt: expense.createdBy.createdAt,
       },

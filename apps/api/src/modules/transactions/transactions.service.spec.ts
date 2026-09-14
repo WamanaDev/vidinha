@@ -4,6 +4,7 @@ import { PrismaService } from "@prisma-module/prisma.service";
 import { SharingPermissionsService } from "@modules/sharing-permissions/sharing-permissions.service";
 import { AccountsService } from "@modules/accounts/accounts.service";
 import { AuditLogService } from "@modules/audit-log/audit-log.service";
+import { SupabaseStorageService } from "@modules/storage/storage.service";
 import {
   BadUserInputAppException,
   ForbiddenAppException,
@@ -44,6 +45,7 @@ describe("TransactionsService", () => {
   let sharingPermissions: { findActiveByResourceIds: jest.Mock };
   let accountsService: { toEntity: jest.Mock };
   let auditLog: { record: jest.Mock };
+  let storage: { resolveAvatarUrl: jest.Mock };
 
   const familyId = "family-1";
   const ownerId = "owner-1";
@@ -122,6 +124,7 @@ describe("TransactionsService", () => {
     sharingPermissions = { findActiveByResourceIds: jest.fn() };
     accountsService = { toEntity: jest.fn() };
     auditLog = { record: jest.fn() };
+    storage = { resolveAvatarUrl: jest.fn().mockResolvedValue(undefined) };
 
     const moduleRef = await Test.createTestingModule({
       providers: [
@@ -130,6 +133,7 @@ describe("TransactionsService", () => {
         { provide: SharingPermissionsService, useValue: sharingPermissions },
         { provide: AccountsService, useValue: accountsService },
         { provide: AuditLogService, useValue: auditLog },
+        { provide: SupabaseStorageService, useValue: storage },
       ],
     }).compile();
 

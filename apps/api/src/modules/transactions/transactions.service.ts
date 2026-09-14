@@ -16,6 +16,7 @@ import { PrismaService } from "@prisma-module/prisma.service";
 import { SharingPermissionsService } from "@modules/sharing-permissions/sharing-permissions.service";
 import { AccountsService } from "@modules/accounts/accounts.service";
 import { AuditLogService } from "@modules/audit-log/audit-log.service";
+import { SupabaseStorageService } from "@modules/storage/storage.service";
 import {
   BadUserInputAppException,
   ForbiddenAppException,
@@ -66,6 +67,7 @@ export class TransactionsService {
     private readonly sharingPermissions: SharingPermissionsService,
     private readonly accountsService: AccountsService,
     private readonly auditLog: AuditLogService,
+    private readonly storage: SupabaseStorageService,
   ) {}
 
   /**
@@ -869,7 +871,9 @@ export class TransactionsService {
             accountPermissions.get(tx.account.id),
           )
         : undefined,
-      card: tx.card ? this.toCardEntity(tx.card, cardPermissions) : undefined,
+      card: tx.card
+        ? await this.toCardEntity(tx.card, cardPermissions)
+        : undefined,
       category: tx.category
         ? this.toCategoryEntity(tx.category, categoryHiddenMap)
         : undefined,
@@ -879,7 +883,7 @@ export class TransactionsService {
             id: owner.id,
             email: owner.email,
             displayName: owner.displayName ?? undefined,
-            avatarUrl: owner.avatarUrl ?? undefined,
+            avatarUrl: await this.storage.resolveAvatarUrl(owner.avatarUrl),
             mfaEnabled: false,
             createdAt: owner.createdAt,
           }
@@ -893,7 +897,7 @@ export class TransactionsService {
    * alterar o módulo `cards` (fora do escopo desta tarefa). Mantém a mesma
    * convenção de `sharedWithFamily` usada por `cards.service.ts#toEntity`.
    */
-  private toCardEntity(
+  private async toCardEntity(
     card: PrismaCard & { owner: PrismaUser },
     cardPermissions: Map<string, PrismaSharingPermission>,
   ) {
@@ -913,7 +917,7 @@ export class TransactionsService {
         id: card.owner.id,
         email: card.owner.email,
         displayName: card.owner.displayName ?? undefined,
-        avatarUrl: card.owner.avatarUrl ?? undefined,
+        avatarUrl: await this.storage.resolveAvatarUrl(card.owner.avatarUrl),
         mfaEnabled: false,
         createdAt: card.owner.createdAt,
       },

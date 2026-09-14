@@ -9,6 +9,7 @@ import {
 import { PrismaService } from "@prisma-module/prisma.service";
 import { SharingPermissionsService } from "@modules/sharing-permissions/sharing-permissions.service";
 import { AuditLogService } from "@modules/audit-log/audit-log.service";
+import { SupabaseStorageService } from "@modules/storage/storage.service";
 import {
   ForbiddenAppException,
   NotFoundAppException,
@@ -32,6 +33,7 @@ export class CardsService {
     private readonly prisma: PrismaService,
     private readonly sharingPermissions: SharingPermissionsService,
     private readonly auditLog: AuditLogService,
+    private readonly storage: SupabaseStorageService,
   ) {}
 
   /**
@@ -67,7 +69,9 @@ export class CardsService {
       (c) => c.ownerId === userId || permissionsByCardId.has(c.id),
     );
 
-    return visible.map((c) => this.toEntity(c, permissionsByCardId.get(c.id)));
+    return Promise.all(
+      visible.map((c) => this.toEntity(c, permissionsByCardId.get(c.id))),
+    );
   }
 
   /**
@@ -206,10 +210,10 @@ export class CardsService {
     return true;
   }
 
-  private toEntity(
+  private async toEntity(
     card: CardWithOwner,
     permission?: PrismaSharingPermission,
-  ): Card {
+  ): Promise<Card> {
     return {
       id: card.id,
       name: card.name,
@@ -228,7 +232,7 @@ export class CardsService {
         id: card.owner.id,
         email: card.owner.email,
         displayName: card.owner.displayName ?? undefined,
-        avatarUrl: card.owner.avatarUrl ?? undefined,
+        avatarUrl: await this.storage.resolveAvatarUrl(card.owner.avatarUrl),
         mfaEnabled: false,
         createdAt: card.owner.createdAt,
       },

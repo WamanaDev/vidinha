@@ -9,6 +9,7 @@ import {
 import { PrismaService } from "@prisma-module/prisma.service";
 import { SharingPermissionsService } from "@modules/sharing-permissions/sharing-permissions.service";
 import { AuditLogService } from "@modules/audit-log/audit-log.service";
+import { SupabaseStorageService } from "@modules/storage/storage.service";
 import { OpenFinanceConnection } from "@modules/open-finance/entities/open-finance-connection.entity";
 import {
   ForbiddenAppException,
@@ -40,6 +41,7 @@ export class AccountsService {
     private readonly prisma: PrismaService,
     private readonly sharingPermissions: SharingPermissionsService,
     private readonly auditLog: AuditLogService,
+    private readonly storage: SupabaseStorageService,
   ) {}
 
   /**
@@ -236,7 +238,7 @@ export class AccountsService {
         id: account.owner.id,
         email: account.owner.email,
         displayName: account.owner.displayName ?? undefined,
-        avatarUrl: account.owner.avatarUrl ?? undefined,
+        avatarUrl: await this.storage.resolveAvatarUrl(account.owner.avatarUrl),
         mfaEnabled: false,
         createdAt: account.owner.createdAt,
       },

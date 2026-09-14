@@ -12,6 +12,7 @@ import {
 } from "@prisma/client";
 import { PrismaService } from "@prisma-module/prisma.service";
 import { AuditLogService } from "@modules/audit-log/audit-log.service";
+import { SupabaseStorageService } from "@modules/storage/storage.service";
 import {
   ConflictAppException,
   ForbiddenAppException,
@@ -47,6 +48,7 @@ export class FamilyService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly auditLog: AuditLogService,
+    private readonly storage: SupabaseStorageService,
   ) {}
 
   /** Lista as famílias de que o usuário autenticado participa ativamente. */
@@ -62,8 +64,10 @@ export class FamilyService {
         },
       },
     });
-    return memberships.map((m) =>
-      this.toMembershipEntity(m as MembershipWithRelations),
+    return Promise.all(
+      memberships.map((m) =>
+        this.toMembershipEntity(m as MembershipWithRelations),
+      ),
     );
   }
 
@@ -143,7 +147,7 @@ export class FamilyService {
     // rawToken (não o hash) é o que vai no e-mail enviado ao convidado — envio de
     // e-mail está fora do escopo deste bootstrap (nenhum provedor definido nas specs).
     return {
-      invite: this.toInviteEntity(invite as InviteWithRelations),
+      invite: await this.toInviteEntity(invite as InviteWithRelations),
       rawToken,
     };
   }
@@ -419,24 +423,26 @@ export class FamilyService {
     return this.toFamilyEntity(family as FamilyWithMembers, currentUserId);
   }
 
-  private toFamilyEntity(
+  private async toFamilyEntity(
     family: FamilyWithMembers,
     currentUserId: string,
-  ): Family {
+  ): Promise<Family> {
     return {
       id: family.id,
       name: family.name,
       createdAt: family.createdAt,
-      members: family.members.map((m) =>
-        this.toMembershipEntity({ ...m, family } as MembershipWithRelations),
+      members: await Promise.all(
+        family.members.map((m) =>
+          this.toMembershipEntity({ ...m, family } as MembershipWithRelations),
+        ),
       ),
       myRole: family.members.find((m) => m.userId === currentUserId)!.role,
     };
   }
 
-  private toMembershipEntity(
+  private async toMembershipEntity(
     membership: MembershipWithRelations,
-  ): FamilyMembership {
+  ): Promise<FamilyMembership> {
     return {
       id: membership.id,
       family: {
@@ -450,7 +456,9 @@ export class FamilyService {
         id: membership.user.id,
         email: membership.user.email,
         displayName: membership.user.displayName ?? undefined,
-        avatarUrl: membership.user.avatarUrl ?? undefined,
+        avatarUrl: await this.storage.resolveAvatarUrl(
+          membership.user.avatarUrl,
+        ),
         mfaEnabled: false,
         createdAt: membership.user.createdAt,
       },
@@ -459,9 +467,9 @@ export class FamilyService {
     };
   }
 
-  private toInviteEntity(
+  private async toInviteEntity(
     invite: InviteWithRelations & { invitedBy: PrismaUser },
-  ): FamilyInvite {
+  ): Promise<FamilyInvite> {
     return {
       id: invite.id,
       family: {
@@ -476,7 +484,9 @@ export class FamilyService {
         id: invite.invitedBy.id,
         email: invite.invitedBy.email,
         displayName: invite.invitedBy.displayName ?? undefined,
-        avatarUrl: invite.invitedBy.avatarUrl ?? undefined,
+        avatarUrl: await this.storage.resolveAvatarUrl(
+          invite.invitedBy.avatarUrl,
+        ),
         mfaEnabled: false,
         createdAt: invite.invitedBy.createdAt,
       },

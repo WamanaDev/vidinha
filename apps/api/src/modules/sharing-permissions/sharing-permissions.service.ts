@@ -11,6 +11,7 @@ import {
 } from "@prisma/client";
 import { PrismaService } from "@prisma-module/prisma.service";
 import { AuditLogService } from "@modules/audit-log/audit-log.service";
+import { SupabaseStorageService } from "@modules/storage/storage.service";
 import { AbilityFactory } from "@casl/ability.factory";
 import { Action } from "@casl/action.enum";
 import {
@@ -31,6 +32,7 @@ export class SharingPermissionsService {
     private readonly prisma: PrismaService,
     private readonly auditLog: AuditLogService,
     private readonly abilityFactory: AbilityFactory,
+    private readonly storage: SupabaseStorageService,
   ) {}
 
   /**
@@ -54,9 +56,13 @@ export class SharingPermissionsService {
       include: { owner: true, family: true },
     });
 
-    return permissions
-      .filter((p) => ability.can(Action.Read, subject("SharingPermission", p)))
-      .map((p) => this.toEntity(p as SharingPermissionWithRelations));
+    return Promise.all(
+      permissions
+        .filter((p) =>
+          ability.can(Action.Read, subject("SharingPermission", p)),
+        )
+        .map((p) => this.toEntity(p as SharingPermissionWithRelations)),
+    );
   }
 
   /**
@@ -166,7 +172,7 @@ export class SharingPermissionsService {
       },
     });
 
-    return this.toEntity(updated as SharingPermissionWithRelations);
+    return await this.toEntity(updated as SharingPermissionWithRelations);
   }
 
   /**
@@ -298,9 +304,9 @@ export class SharingPermissionsService {
     return updated;
   }
 
-  private toEntity(
+  private async toEntity(
     permission: SharingPermissionWithRelations,
-  ): SharingPermission {
+  ): Promise<SharingPermission> {
     return {
       id: permission.id,
       // SUPOSIÇÃO: `Family.myRole` não é relevante neste contexto (o objeto
@@ -318,7 +324,9 @@ export class SharingPermissionsService {
         id: permission.owner.id,
         email: permission.owner.email,
         displayName: permission.owner.displayName ?? undefined,
-        avatarUrl: permission.owner.avatarUrl ?? undefined,
+        avatarUrl: await this.storage.resolveAvatarUrl(
+          permission.owner.avatarUrl,
+        ),
         mfaEnabled: false,
         createdAt: permission.owner.createdAt,
       },
