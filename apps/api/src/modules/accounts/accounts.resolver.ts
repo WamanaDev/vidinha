@@ -3,6 +3,8 @@ import { CurrentUser } from "@common/decorators/current-user.decorator";
 import { AuthUser } from "@common/types/auth-user.type";
 import { AccountsService } from "./accounts.service";
 import { UpdateAccountSharingInput } from "./dto/update-account-sharing.input";
+import { CreateAccountInput } from "./dto/create-account.input";
+import { UpdateAccountInput } from "./dto/update-account.input";
 import { Account } from "./entities/account.entity";
 
 /**
@@ -29,5 +31,29 @@ export class AccountsResolver {
     @Args("input") input: UpdateAccountSharingInput,
   ): Promise<Account> {
     return this.accountsService.updateSharing(user.userId, input);
+  }
+
+  @Mutation(() => Account)
+  async createAccount(
+    @CurrentUser() user: AuthUser,
+    @Args("input") input: CreateAccountInput,
+  ): Promise<Account> {
+    return this.accountsService.create(user.userId, input);
+  }
+
+  @Mutation(() => Account)
+  async updateAccount(
+    @CurrentUser() user: AuthUser,
+    @Args("input") input: UpdateAccountInput,
+  ): Promise<Account> {
+    return this.accountsService.updateManual(user.userId, input);
+  }
+
+  @Mutation(() => Boolean)
+  async archiveAccount(
+    @CurrentUser() user: AuthUser,
+    @Args("id", { type: () => ID }) id: string,
+  ): Promise<boolean> {
+    return this.accountsService.archive(user.userId, id);
   }
 }

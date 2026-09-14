@@ -1,7 +1,10 @@
 import { Injectable } from "@nestjs/common";
 import {
   Prisma,
+  AuditAction,
   SharableResourceType,
+  TransactionSource,
+  TransactionType,
   SharingPermission as PrismaSharingPermission,
   Transaction as PrismaTransaction,
   Category as PrismaCategory,
@@ -12,7 +15,9 @@ import {
 import { PrismaService } from "@prisma-module/prisma.service";
 import { SharingPermissionsService } from "@modules/sharing-permissions/sharing-permissions.service";
 import { AccountsService } from "@modules/accounts/accounts.service";
+import { AuditLogService } from "@modules/audit-log/audit-log.service";
 import {
+  BadUserInputAppException,
   ForbiddenAppException,
   NotFoundAppException,
 } from "@common/errors/app.exceptions";
@@ -25,6 +30,8 @@ import {
 } from "./dto/transaction-order.input";
 import { HideTransactionInput } from "./dto/hide-transaction.input";
 import { UpdateTransactionCategoryInput } from "./dto/update-transaction-category.input";
+import { CreateTransactionInput } from "./dto/create-transaction.input";
+import { UpdateTransactionInput } from "./dto/update-transaction.input";
 import { Transaction } from "./entities/transaction.entity";
 import { TransactionConnection } from "./entities/transaction-connection.entity";
 import { Category } from "./entities/category.entity";
@@ -58,6 +65,7 @@ export class TransactionsService {
     private readonly prisma: PrismaService,
     private readonly sharingPermissions: SharingPermissionsService,
     private readonly accountsService: AccountsService,
+    private readonly auditLog: AuditLogService,
   ) {}
 
   /**
@@ -252,12 +260,7 @@ export class TransactionsService {
       userId,
     );
 
-    const category = await this.prisma.category.findUnique({
-      where: { id: input.categoryId },
-    });
-    if (!category) {
-      throw new NotFoundAppException("Categoria não encontrada.");
-    }
+    await this.assertCategoryExists(input.categoryId);
 
     const updated = await this.prisma.transaction.update({
       where: { id: tx.id },
@@ -270,6 +273,323 @@ export class TransactionsService {
     });
 
     return this.toSingleEntity(updated);
+  }
+
+  /**
+   * Lança uma transação manual em uma conta OU cartão (exatamente um dos
+   * dois, validado aqui — `BadUserInputAppException` se vier os dois ou
+   * nenhum). A conta/cartão referenciado precisa ser `isManual: true` e
+   * pertencer ao usuário chamador (não é possível lançar uma transação
+   * manual em uma conta/cartão sincronizado via Open Finance, o que deixaria
+   * o saldo inconsistente com o valor real vindo do banco).
+   *
+   * A criação da `Transaction` e o ajuste do `balance`/`currentInvoice` da
+   * conta/cartão afetada são feitos em uma única transação Prisma
+   * (`$transaction`) para atomicidade — nunca deve existir uma `Transaction`
+   * gravada sem o saldo correspondente ter sido ajustado, nem vice-versa.
+   */
+  async createManual(
+    userId: string,
+    input: CreateTransactionInput,
+  ): Promise<Transaction> {
+    this.assertExactlyOneTarget(input.accountId, input.cardId);
+
+    if (input.categoryId) {
+      await this.assertCategoryExists(input.categoryId);
+    }
+
+    const created = await this.prisma.$transaction(async (tx) => {
+      if (input.accountId) {
+        await this.findOwnedManualAccountOrThrow(tx, input.accountId, userId);
+        await this.applyAccountDelta(
+          tx,
+          input.accountId,
+          this.accountDelta(input.type, input.amount),
+        );
+      } else {
+        await this.findOwnedManualCardOrThrow(tx, input.cardId!, userId);
+        await this.applyCardDelta(
+          tx,
+          input.cardId!,
+          this.cardDelta(input.type, input.amount),
+        );
+      }
+
+      return tx.transaction.create({
+        data: {
+          accountId: input.accountId ?? null,
+          cardId: input.cardId ?? null,
+          categoryId: input.categoryId ?? null,
+          description: input.description,
+          amount: input.amount,
+          type: input.type,
+          source: TransactionSource.MANUAL,
+          occurredAt: input.occurredAt,
+        },
+        include: {
+          account: { include: { owner: true } },
+          card: { include: { owner: true } },
+          category: true,
+        },
+      });
+    });
+
+    const familyId = await this.resolveOwnerFamilyId(userId);
+    await this.auditLog.record({
+      actorId: userId,
+      familyId,
+      action: AuditAction.TRANSACTION_CREATED,
+      metadata: {
+        transactionId: created.id,
+        accountId: input.accountId,
+        cardId: input.cardId,
+        amount: input.amount,
+        type: input.type,
+      },
+    });
+
+    return this.toSingleEntity(created as TransactionWithRelations);
+  }
+
+  /**
+   * Edita uma transação manual. Só o dono (dono da conta/cartão associado)
+   * pode executar, e somente se `source: MANUAL` — nunca uma transação vinda
+   * de sincronização Open Finance. Não é possível trocar `accountId`/
+   * `cardId` (ver SUPOSIÇÃO em `UpdateTransactionInput`).
+   *
+   * Quando `amount`/`type` mudam, reverte o efeito antigo no saldo e aplica
+   * o novo, dentro da mesma transação Prisma que grava a atualização.
+   */
+  async updateManual(
+    userId: string,
+    input: UpdateTransactionInput,
+  ): Promise<Transaction> {
+    const existing = await this.findOwnedManualTransactionOrThrow(
+      input.id,
+      userId,
+    );
+
+    if (input.categoryId) {
+      await this.assertCategoryExists(input.categoryId);
+    }
+
+    const newAmount = input.amount ?? Number(existing.amount);
+    const newType = input.type ?? existing.type;
+
+    const updated = await this.prisma.$transaction(async (tx) => {
+      if (input.amount !== undefined || input.type !== undefined) {
+        const oldAmount = Number(existing.amount);
+        const diff = existing.accountId
+          ? this.accountDelta(newType, newAmount) -
+            this.accountDelta(existing.type, oldAmount)
+          : this.cardDelta(newType, newAmount) -
+            this.cardDelta(existing.type, oldAmount);
+
+        if (diff !== 0) {
+          if (existing.accountId) {
+            await this.applyAccountDelta(tx, existing.accountId, diff);
+          } else {
+            await this.applyCardDelta(tx, existing.cardId!, diff);
+          }
+        }
+      }
+
+      return tx.transaction.update({
+        where: { id: existing.id },
+        data: {
+          description: input.description,
+          amount: input.amount,
+          type: input.type,
+          occurredAt: input.occurredAt,
+          categoryId: input.categoryId,
+        },
+        include: {
+          account: { include: { owner: true } },
+          card: { include: { owner: true } },
+          category: true,
+        },
+      });
+    });
+
+    const familyId = await this.resolveOwnerFamilyId(userId);
+    await this.auditLog.record({
+      actorId: userId,
+      familyId,
+      action: AuditAction.TRANSACTION_UPDATED,
+      metadata: {
+        transactionId: updated.id,
+        amount: Number(updated.amount),
+        type: updated.type,
+      },
+    });
+
+    return this.toSingleEntity(updated as TransactionWithRelations);
+  }
+
+  /**
+   * Exclui uma transação manual, revertendo o efeito que ela teve no
+   * `balance`/`currentInvoice` da conta/cartão associada. Só o dono pode
+   * executar, e somente se `source: MANUAL`.
+   */
+  async deleteManual(userId: string, id: string): Promise<boolean> {
+    const existing = await this.findOwnedManualTransactionOrThrow(id, userId);
+
+    await this.prisma.$transaction(async (tx) => {
+      const revertDelta = existing.accountId
+        ? -this.accountDelta(existing.type, Number(existing.amount))
+        : -this.cardDelta(existing.type, Number(existing.amount));
+
+      if (existing.accountId) {
+        await this.applyAccountDelta(tx, existing.accountId, revertDelta);
+      } else {
+        await this.applyCardDelta(tx, existing.cardId!, revertDelta);
+      }
+
+      await tx.transaction.delete({ where: { id: existing.id } });
+    });
+
+    const familyId = await this.resolveOwnerFamilyId(userId);
+    await this.auditLog.record({
+      actorId: userId,
+      familyId,
+      action: AuditAction.TRANSACTION_DELETED,
+      metadata: {
+        transactionId: existing.id,
+        amount: Number(existing.amount),
+        type: existing.type,
+      },
+    });
+
+    return true;
+  }
+
+  // ---------------------------------------------------------------------
+  // Helpers privados — CRUD manual
+  // ---------------------------------------------------------------------
+
+  private async assertCategoryExists(categoryId: string): Promise<void> {
+    const category = await this.prisma.category.findUnique({
+      where: { id: categoryId },
+    });
+    if (!category) {
+      throw new NotFoundAppException("Categoria não encontrada.");
+    }
+  }
+
+  private assertExactlyOneTarget(accountId?: string, cardId?: string): void {
+    const count = [accountId, cardId].filter((v) => !!v).length;
+    if (count !== 1) {
+      throw new BadUserInputAppException(
+        "Informe exatamente um entre accountId e cardId.",
+      );
+    }
+  }
+
+  /**
+   * Delta de saldo de conta: `DEBIT` diminui o saldo, `CREDIT` aumenta.
+   */
+  private accountDelta(type: TransactionType, amount: number): number {
+    return type === TransactionType.DEBIT ? -amount : amount;
+  }
+
+  /**
+   * Delta da fatura/saldo do cartão: SUPOSIÇÃO — tratamos `currentInvoice`
+   * como "valor devido" (fatura em aberto): uma compra (`DEBIT`) aumenta a
+   * fatura; um estorno/pagamento (`CREDIT`) diminui. Aplicado da mesma forma
+   * para cartões CREDIT/DEBIT/PREPAID, já que o schema Prisma não tem um
+   * campo de saldo específico por tipo de cartão.
+   */
+  private cardDelta(type: TransactionType, amount: number): number {
+    return type === TransactionType.DEBIT ? amount : -amount;
+  }
+
+  private async applyAccountDelta(
+    tx: Prisma.TransactionClient,
+    accountId: string,
+    delta: number,
+  ): Promise<void> {
+    if (delta === 0) return;
+    await tx.account.update({
+      where: { id: accountId },
+      data: {
+        balance: { increment: delta },
+        balanceUpdatedAt: new Date(),
+      },
+    });
+  }
+
+  private async applyCardDelta(
+    tx: Prisma.TransactionClient,
+    cardId: string,
+    delta: number,
+  ): Promise<void> {
+    if (delta === 0) return;
+    await tx.card.update({
+      where: { id: cardId },
+      data: { currentInvoice: { increment: delta } },
+    });
+  }
+
+  private async findOwnedManualAccountOrThrow(
+    tx: Prisma.TransactionClient,
+    accountId: string,
+    userId: string,
+  ): Promise<PrismaAccount> {
+    const account = await tx.account.findUnique({ where: { id: accountId } });
+    if (!account || account.archivedAt) {
+      throw new NotFoundAppException("Conta não encontrada.");
+    }
+    if (account.ownerId !== userId) {
+      throw new ForbiddenAppException(
+        "Você não tem permissão sobre esta conta.",
+      );
+    }
+    if (!account.isManual) {
+      throw new BadUserInputAppException(
+        "Não é possível lançar transações manuais em uma conta sincronizada via Open Finance.",
+      );
+    }
+    return account;
+  }
+
+  private async findOwnedManualCardOrThrow(
+    tx: Prisma.TransactionClient,
+    cardId: string,
+    userId: string,
+  ): Promise<PrismaCard> {
+    const card = await tx.card.findUnique({ where: { id: cardId } });
+    if (!card || card.archivedAt) {
+      throw new NotFoundAppException("Cartão não encontrado.");
+    }
+    if (card.ownerId !== userId) {
+      throw new ForbiddenAppException(
+        "Você não tem permissão sobre este cartão.",
+      );
+    }
+    if (!card.isManual) {
+      throw new BadUserInputAppException(
+        "Não é possível lançar transações manuais em um cartão sincronizado via Open Finance.",
+      );
+    }
+    return card;
+  }
+
+  /**
+   * Igual a `findOwnedTransactionOrThrow`, mas também exige
+   * `source: MANUAL` — usado por `updateManual`/`deleteManual`, que nunca
+   * podem alterar uma transação vinda de sincronização Open Finance.
+   */
+  private async findOwnedManualTransactionOrThrow(
+    transactionId: string,
+    userId: string,
+  ): Promise<TransactionWithRelations> {
+    const tx = await this.findOwnedTransactionOrThrow(transactionId, userId);
+    if (tx.source !== TransactionSource.MANUAL) {
+      throw new ForbiddenAppException(
+        "Somente transações lançadas manualmente podem ser editadas ou excluídas.",
+      );
+    }
+    return tx;
   }
 
   // ---------------------------------------------------------------------
@@ -581,6 +901,8 @@ export class TransactionsService {
     return {
       id: card.id,
       name: card.name,
+      type: card.type,
+      brand: card.brand ?? undefined,
       lastFourDigits: card.lastFourDigits ?? undefined,
       limit: card.creditLimit !== null ? Number(card.creditLimit) : undefined,
       currentInvoice:

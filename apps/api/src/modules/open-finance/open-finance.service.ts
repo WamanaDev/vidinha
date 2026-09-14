@@ -1,7 +1,11 @@
 import { Injectable, Logger } from "@nestjs/common";
 import {
+  AccountType,
   AuditAction,
+  CardType,
   ConnectionStatus,
+  TransactionSource,
+  TransactionType,
   OpenFinanceConnection as PrismaOpenFinanceConnection,
   Institution as PrismaInstitution,
   Account as PrismaAccount,
@@ -13,7 +17,12 @@ import {
   ForbiddenAppException,
   NotFoundAppException,
 } from "@common/errors/app.exceptions";
-import { PluggyClientService, PluggyItem } from "./pluggy-client.service";
+import {
+  PluggyAccount,
+  PluggyClientService,
+  PluggyItem,
+  PluggyTransaction,
+} from "./pluggy-client.service";
 import { CredentialParameterInput } from "./dto/credential-parameter.input";
 import { CreateOpenFinanceItemInput } from "./dto/create-open-finance-item.input";
 import { SendOpenFinanceItemMfaInput } from "./dto/send-open-finance-item-mfa.input";
@@ -207,19 +216,31 @@ export class OpenFinanceService {
     const item = await this.pluggyClient.triggerItemUpdate(
       connection.pluggyItemId,
     );
+    const status = this.mapPluggyStatus(item);
 
     const updated = await this.prisma.openFinanceConnection.update({
       where: { id: connection.id },
       data: {
-        status: this.mapPluggyStatus(item),
+        status,
         lastSyncedAt: item.lastUpdatedAt
           ? new Date(item.lastUpdatedAt)
           : new Date(),
       },
-      include: { institution: true, accounts: { include: { owner: true } } },
     });
 
-    return await this.toEntity(updated as ConnectionWithRelations);
+    if (status === ConnectionStatus.CONNECTED) {
+      await this.syncAccountsAndTransactions(updated);
+    }
+
+    // Recarrega com `accounts` após o sync acima (pode ter criado/atualizado
+    // contas) para que a resposta reflita o estado mais recente.
+    const withRelations =
+      await this.prisma.openFinanceConnection.findUniqueOrThrow({
+        where: { id: connection.id },
+        include: { institution: true, accounts: { include: { owner: true } } },
+      });
+
+    return await this.toEntity(withRelations as ConnectionWithRelations);
   }
 
   /**
@@ -264,15 +285,21 @@ export class OpenFinanceService {
     if (!connection) return; // item desconhecido — ignorado silenciosamente
 
     const item = await this.pluggyClient.getItem(pluggyItemId);
-    await this.prisma.openFinanceConnection.update({
+    const status = this.mapPluggyStatus(item);
+
+    const updated = await this.prisma.openFinanceConnection.update({
       where: { id: connection.id },
       data: {
-        status: this.mapPluggyStatus(item),
+        status,
         lastSyncedAt: item.lastUpdatedAt
           ? new Date(item.lastUpdatedAt)
           : new Date(),
       },
     });
+
+    if (status === ConnectionStatus.CONNECTED) {
+      await this.syncAccountsAndTransactions(updated);
+    }
   }
 
   /**
@@ -392,6 +419,260 @@ export class OpenFinanceService {
     });
 
     return connection as ConnectionWithRelations;
+  }
+
+  /**
+   * Sincroniza contas, cartões e transações de uma conexão a partir da API do
+   * Pluggy, chamado por `syncConnection` (pull-to-refresh manual) e
+   * `applyWebhookUpdate` (webhook `item/updated`) sempre que o status
+   * resultante é `CONNECTED`. Idempotente: usa `pluggyAccountId`/`externalId`
+   * como chaves naturais de upsert, então rodar duas vezes para a mesma
+   * conexão nunca duplica registros.
+   *
+   * Defensivo por design: qualquer falha (rede, erro do Pluggy) é logada e
+   * NUNCA propagada — não deve derrubar o fluxo principal do webhook/sync
+   * manual, que já respondeu/vai responder com sucesso independentemente do
+   * resultado desta sincronização (ver open-finance.module.md §2).
+   *
+   * NUNCA loga saldo, número de conta ou qualquer dado financeiro sensível —
+   * apenas IDs/contadores, mesmo padrão do restante do módulo.
+   */
+  private async syncAccountsAndTransactions(
+    connection: PrismaOpenFinanceConnection,
+  ): Promise<void> {
+    try {
+      const pluggyAccounts = await this.pluggyClient.getAccounts(
+        connection.pluggyItemId,
+      );
+
+      for (const pluggyAccount of pluggyAccounts) {
+        if (this.isPluggyCardAccount(pluggyAccount)) {
+          const card = await this.upsertCardFromPluggyAccount(
+            connection,
+            pluggyAccount,
+          );
+          await this.syncTransactionsForResource(pluggyAccount.id, {
+            cardId: card.id,
+          });
+        } else {
+          const account = await this.upsertAccountFromPluggyAccount(
+            connection,
+            pluggyAccount,
+          );
+          await this.syncTransactionsForResource(pluggyAccount.id, {
+            accountId: account.id,
+          });
+        }
+      }
+
+      this.logger.log(
+        `Sincronização Open Finance concluída para a conexão ${connection.id} (${pluggyAccounts.length} conta(s)/cartão(ões)).`,
+      );
+    } catch (error) {
+      this.logger.error(
+        `Falha ao sincronizar contas/transações da conexão ${connection.id} (pluggyItemId=${connection.pluggyItemId})`,
+        error as Error,
+      );
+    }
+  }
+
+  /**
+   * Confirmado via MCP oficial da Pluggy (ver nota em
+   * `pluggy-client.service.ts#PluggyAccount`): contas Pluggy com `type:
+   * "CREDIT"` viram `Card`; `type: "BANK"` vira `Account`. Mantemos o
+   * fallback por `subtype: "CREDIT_CARD"` apenas como defesa extra caso
+   * `type` venha ausente/inesperado (fail-safe, não altera o comportamento
+   * para os valores documentados).
+   */
+  private isPluggyCardAccount(pluggyAccount: PluggyAccount): boolean {
+    return (
+      pluggyAccount.type === "CREDIT" || pluggyAccount.subtype === "CREDIT_CARD"
+    );
+  }
+
+  /** Últimos 4 dígitos apenas — nunca persiste o número completo (ver 00-DECISIONS §2). */
+  private extractLastFourDigits(number?: string): string | undefined {
+    if (!number) return undefined;
+    return number.slice(-4);
+  }
+
+  /**
+   * SUPOSIÇÃO: mapeamento de `subtype` Pluggy para `AccountType` —
+   * `CHECKING_ACCOUNT` -> `CHECKING`, `SAVINGS_ACCOUNT` -> `SAVINGS`, qualquer
+   * outro valor (incluindo ausente) cai em `OTHER` (fail-safe, nunca
+   * inventamos um valor de enum inexistente no schema Prisma).
+   */
+  private mapPluggyAccountType(pluggyAccount: PluggyAccount): AccountType {
+    switch (pluggyAccount.subtype) {
+      case "CHECKING_ACCOUNT":
+        return AccountType.CHECKING;
+      case "SAVINGS_ACCOUNT":
+        return AccountType.SAVINGS;
+      default:
+        return AccountType.OTHER;
+    }
+  }
+
+  private async upsertAccountFromPluggyAccount(
+    connection: PrismaOpenFinanceConnection,
+    pluggyAccount: PluggyAccount,
+  ): Promise<PrismaAccount> {
+    const maskedNumber = this.extractLastFourDigits(pluggyAccount.number);
+    const data = {
+      name: pluggyAccount.name,
+      maskedNumber,
+      currency: pluggyAccount.currencyCode || "BRL",
+      balance: pluggyAccount.balance,
+      balanceUpdatedAt: new Date(),
+    };
+
+    return this.prisma.account.upsert({
+      where: { pluggyAccountId: pluggyAccount.id },
+      update: data,
+      create: {
+        ...data,
+        ownerId: connection.userId,
+        connectionId: connection.id,
+        pluggyAccountId: pluggyAccount.id,
+        type: this.mapPluggyAccountType(pluggyAccount),
+        isManual: false,
+      },
+    });
+  }
+
+  /**
+   * SUPOSIÇÃO: mapeamos `PluggyAccount.balance` (saldo/fatura em aberto de
+   * uma conta `type: CREDIT`) para `Card.currentInvoice`, e
+   * `creditData.creditLimit` (com fallback para `availableCreditLimit`) para
+   * `Card.creditLimit` — não verificado via MCP oficial da Pluggy nesta
+   * sessão (ver nota em `pluggy-client.service.ts#PluggyAccount`).
+   */
+  private async upsertCardFromPluggyAccount(
+    connection: PrismaOpenFinanceConnection,
+    pluggyAccount: PluggyAccount,
+  ) {
+    const data = {
+      name: pluggyAccount.name,
+      brand: pluggyAccount.creditData?.brand,
+      lastFourDigits: this.extractLastFourDigits(pluggyAccount.number),
+      creditLimit:
+        pluggyAccount.creditData?.creditLimit ??
+        pluggyAccount.creditData?.availableCreditLimit,
+      currentInvoice: pluggyAccount.balance,
+    };
+
+    return this.prisma.card.upsert({
+      where: { pluggyAccountId: pluggyAccount.id },
+      update: data,
+      create: {
+        ...data,
+        ownerId: connection.userId,
+        connectionId: connection.id,
+        pluggyAccountId: pluggyAccount.id,
+        type: CardType.CREDIT,
+        isManual: false,
+      },
+    });
+  }
+
+  /**
+   * Confirmado via MCP oficial da Pluggy: `tx.type` (`"DEBIT"`|`"CREDIT"`)
+   * sempre vem preenchido pela API, já normalizado do ponto de vista do
+   * portador (compra no cartão = DEBIT, pagamento de fatura = CREDIT) —
+   * nunca invertemos esse sinal nem inferimos pelo `amount`.
+   */
+  private mapPluggyTransactionType(tx: PluggyTransaction): TransactionType {
+    return tx.type === "CREDIT"
+      ? TransactionType.CREDIT
+      : TransactionType.DEBIT;
+  }
+
+  /**
+   * Extrai o cursor `after` de uma query-string `next` retornada pela Pluggy
+   * (ex.: `"?accountId=abc&after=xyz"`). NUNCA repassamos a query-string
+   * inteira adiante — apenas o valor do parâmetro `after`, já decodificado,
+   * para montar a próxima chamada com nosso próprio `URLSearchParams` (ver
+   * `pluggy-client.service.ts#getTransactions`).
+   */
+  private extractAfterCursor(next: string | null): string | undefined {
+    if (!next) return undefined;
+    const query = next.startsWith("?") ? next.slice(1) : next;
+    return new URLSearchParams(query).get("after") ?? undefined;
+  }
+
+  /**
+   * Pagina `GET /v2/transactions` (cursor-based, via `next`) e faz upsert de
+   * cada transação usando a chave natural `@@unique([externalId, accountId,
+   * cardId])` (ver transaction.md §4 "Deduplicação de sync") — nunca duplica
+   * uma transação já importada em re-sincronizações (webhook duplicado,
+   * pull-to-refresh repetido, etc).
+   *
+   * SUPOSIÇÃO: só sincronizamos transações com `status: "POSTED"` (já
+   * efetivadas) — transações `"PENDING"` podem mudar de valor/desaparecer
+   * depois e o requisito da tarefa não especifica como reconciliar esse
+   * caso; ficam de fora do MVP de sync e serão trazidas por uma
+   * sincronização futura já como `POSTED`. Transações sem `status` (campo
+   * opcional) são tratadas como já efetivadas, por segurança (fail-open só
+   * para não perder dados de provedores/sandboxes que não preenchem o campo).
+   */
+  private async syncTransactionsForResource(
+    pluggyAccountId: string,
+    ref: { accountId?: string; cardId?: string },
+  ): Promise<void> {
+    let after: string | undefined;
+
+    do {
+      const result = await this.pluggyClient.getTransactions(pluggyAccountId, {
+        after,
+      });
+
+      for (const tx of result.results) {
+        if (tx.status && tx.status !== "POSTED") continue;
+
+        const amount = Math.abs(tx.amount);
+        const type = this.mapPluggyTransactionType(tx);
+        const occurredAt = new Date(tx.date);
+
+        // O tipo gerado `TransactionExternalIdAccountIdCardIdCompoundUniqueInput`
+        // tipa `accountId`/`cardId` como `string` não-opcional (quirk conhecido
+        // do Prisma: campos de índice composto único ficam `string` mesmo
+        // quando a coluna subjacente é nullable) — em runtime o Prisma traduz
+        // `null` para `IS NULL` corretamente, então o cast abaixo é seguro.
+        const compoundKey = {
+          externalId: tx.id,
+          accountId: ref.accountId ?? null,
+          cardId: ref.cardId ?? null,
+        } as unknown as {
+          externalId: string;
+          accountId: string;
+          cardId: string;
+        };
+
+        await this.prisma.transaction.upsert({
+          where: {
+            externalId_accountId_cardId: compoundKey,
+          },
+          update: {
+            description: tx.description,
+            amount,
+            type,
+            occurredAt,
+          },
+          create: {
+            accountId: ref.accountId,
+            cardId: ref.cardId,
+            externalId: tx.id,
+            description: tx.description,
+            amount,
+            type,
+            source: TransactionSource.OPEN_FINANCE,
+            occurredAt,
+          },
+        });
+      }
+
+      after = this.extractAfterCursor(result.next);
+    } while (after);
   }
 
   private async toItemResult(

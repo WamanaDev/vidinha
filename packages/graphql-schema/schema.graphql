@@ -93,6 +93,8 @@ enum AccountType {
   CHECKING
   SAVINGS
   INVESTMENT
+  CASH
+  CRYPTO
   OTHER
 }
 
@@ -115,34 +117,14 @@ enum ConnectionStatus {
   REVOKED
 }
 
-"""
-Instituição financeira disponível para conexão direta via API do Pluggy
-(substitui o antigo widget Pluggy Connect). Sempre buscado ao vivo em
-GET /connectors — nunca persistido no Postgres.
-"""
-type OpenFinanceConnector {
-  id: Int!
-  name: String!
-  imageUrl: String
-  primaryColor: String
-  """PERSONAL_BANK | BUSINESS_BANK | INVESTMENT | INVOICE | TELECOMMUNICATION | OTHER (string livre, ver ConnectorCredential.type)."""
-  type: String!
-  country: String!
-  credentials: [ConnectorCredential!]!
-  hasMFA: Boolean!
-  oauth: Boolean!
-  """Presente quando oauth = true. O app decide como tratar esse fluxo (ex.: WebView), sem endpoint de callback próprio por enquanto."""
-  oauthUrl: String
-  health: ConnectorHealth
-  isOpenFinance: Boolean!
-  isSandbox: Boolean!
+type ConnectorCredentialOption {
+  value: String!
+  label: String!
 }
 
-"""Um campo de formulário exigido pelo Connector (dinâmico por banco)."""
 type ConnectorCredential {
   name: String!
   label: String!
-  """text | password | number | image | select (string livre, não fechado em enum — ver contrato do Pluggy)."""
   type: String!
   placeholder: String
   validation: String
@@ -152,36 +134,40 @@ type ConnectorCredential {
   options: [ConnectorCredentialOption!]
 }
 
-type ConnectorCredentialOption {
-  value: String!
-  label: String!
-}
-
 type ConnectorHealth {
-  """ONLINE | OFFLINE | UNSTABLE"""
   status: String!
 }
 
-"""Retorno de createOpenFinanceItem/sendOpenFinanceItemMfa."""
-type OpenFinanceItemResult {
-  connection: OpenFinanceConnection!
-  """Id do Item na Pluggy (não o id de `connection`) — necessário para chamar sendOpenFinanceItemMfa quando mfaParameter vier preenchido."""
-  pluggyItemId: String!
-  status: String!
-  executionStatus: String
-  """Presente quando o Pluggy está aguardando um valor de MFA — descreve qual credencial pedir agora."""
-  mfaParameter: ConnectorCredential
-  """Presente em fluxos de device authorization (QR code / autorização no app do banco)."""
-  userAction: OpenFinanceUserAction
-  """Mensagem segura de erro (nunca inclui credenciais/stacktrace)."""
-  errorMessage: String
+type OpenFinanceConnector {
+  id: Int!
+  name: String!
+  imageUrl: String
+  primaryColor: String
+  type: String!
+  country: String!
+  credentials: [ConnectorCredential!]!
+  hasMFA: Boolean!
+  oauth: Boolean!
+  oauthUrl: String
+  health: ConnectorHealth
+  isOpenFinance: Boolean!
+  isSandbox: Boolean!
 }
 
 type OpenFinanceUserAction {
-  """Ex.: "qr" | "authorize-access"."""
   type: String!
   instructions: String!
   expiresAt: DateTime
+}
+
+type OpenFinanceItemResult {
+  connection: OpenFinanceConnection!
+  pluggyItemId: String!
+  status: String!
+  executionStatus: String
+  mfaParameter: ConnectorCredential
+  userAction: OpenFinanceUserAction
+  errorMessage: String
 }
 
 type SharingPermission implements Node {
@@ -204,12 +190,20 @@ enum SharingScope {
 type Card implements Node {
   id: ID!
   name: String!
+  type: CardType!
+  brand: String
   lastFourDigits: String
   limit: Float
   currentInvoice: Float
   dueDate: DateTime
   sharedWithFamily: Boolean!
   owner: User!
+}
+
+enum CardType {
+  CREDIT
+  DEBIT
+  PREPAID
 }
 
 type Category implements Node {
@@ -278,7 +272,6 @@ type Query {
   me: User!
   family(id: ID!): Family!
   myFamilies: [FamilyMembership!]!
-  """Lista instituições disponíveis para conexão direta via API (país fixo BR). includeSandbox default false."""
   openFinanceConnectors(includeSandbox: Boolean): [OpenFinanceConnector!]!
   openFinanceConnections(familyId: ID!): [OpenFinanceConnection!]!
   sharingPermissions(familyId: ID!): [SharingPermission!]!
@@ -326,17 +319,24 @@ type Mutation {
   promoteMember(input: PromoteMemberInput!): FamilyPayload!
   leaveFamily(familyId: ID!): Boolean!
   deleteFamily(familyId: ID!): Boolean!
-  """Cria a conexão bancária diretamente via API (formulário nativo, sem widget). Rate-limited (auth-sensitive)."""
   createOpenFinanceItem(input: CreateOpenFinanceItemInput!): OpenFinanceItemResult!
-  """Envia o valor de MFA pedido pelo Pluggy para um item pendente. Rate-limited (auth-sensitive)."""
   sendOpenFinanceItemMfa(input: SendOpenFinanceItemMfaInput!): OpenFinanceItemResult!
   syncOpenFinanceConnection(connectionId: ID!): OpenFinanceConnection!
   revokeOpenFinanceConnection(connectionId: ID!): Boolean!
   updateSharingPermission(input: UpdateSharingPermissionInput!): SharingPermission!
   updateAccountSharing(input: UpdateAccountSharingInput!): Account!
+  createAccount(input: CreateAccountInput!): Account!
+  updateAccount(input: UpdateAccountInput!): Account!
+  archiveAccount(id: ID!): Boolean!
   updateCardSharing(input: UpdateCardSharingInput!): Card!
+  createCard(input: CreateCardInput!): Card!
+  updateCard(input: UpdateCardInput!): Card!
+  archiveCard(id: ID!): Boolean!
   hideTransaction(input: HideTransactionInput!): Transaction!
   updateTransactionCategory(input: UpdateTransactionCategoryInput!): Transaction!
+  createTransaction(input: CreateTransactionInput!): Transaction!
+  updateTransaction(input: UpdateTransactionInput!): Transaction!
+  deleteTransaction(id: ID!): Boolean!
   createRecurringExpense(input: CreateRecurringExpenseInput!): RecurringExpense!
   updateRecurringExpense(input: UpdateRecurringExpenseInput!): RecurringExpense!
   deleteRecurringExpense(id: ID!): Boolean!
@@ -373,21 +373,18 @@ input PromoteMemberInput {
   membershipId: ID!
 }
 
-"""Um par nome/valor de credencial exigida pelo Connector (ConnectorCredential.name -> valor preenchido pelo usuário)."""
+input CreateOpenFinanceItemInput {
+  familyId: ID!
+  connectorId: Int!
+  parameters: [CredentialParameterInput!]!
+}
+
 input CredentialParameterInput {
   name: String!
   value: String!
 }
 
-input CreateOpenFinanceItemInput {
-  familyId: ID!
-  connectorId: Int!
-  """Nunca vazio — uma entrada por ConnectorCredential.name retornado por openFinanceConnectors."""
-  parameters: [CredentialParameterInput!]!
-}
-
 input SendOpenFinanceItemMfaInput {
-  """Item.id retornado por createOpenFinanceItem/sendOpenFinanceItemMfa anterior."""
   itemId: ID!
   parameters: [CredentialParameterInput!]!
 }
@@ -404,9 +401,47 @@ input UpdateAccountSharingInput {
   fullDetailShared: Boolean!
 }
 
+input CreateAccountInput {
+  familyId: ID!
+  name: String!
+  type: AccountType!
+  maskedNumber: String
+  balance: Float!
+  currency: String
+}
+
+input UpdateAccountInput {
+  id: ID!
+  name: String
+  maskedNumber: String
+  currency: String
+  balance: Float
+}
+
 input UpdateCardSharingInput {
   cardId: ID!
   sharedWithFamily: Boolean!
+}
+
+input CreateCardInput {
+  familyId: ID!
+  name: String!
+  type: CardType!
+  brand: String
+  lastFourDigits: String
+  billingAccountId: ID
+  creditLimit: Float
+  currentInvoice: Float
+}
+
+input UpdateCardInput {
+  id: ID!
+  name: String
+  brand: String
+  lastFourDigits: String
+  billingAccountId: ID
+  creditLimit: Float
+  currentInvoice: Float
 }
 
 input HideTransactionInput {
@@ -417,6 +452,30 @@ input HideTransactionInput {
 input UpdateTransactionCategoryInput {
   transactionId: ID!
   categoryId: ID!
+}
+
+input CreateTransactionInput {
+  accountId: ID
+  cardId: ID
+  categoryId: ID
+  description: String!
+  amount: Float!
+  type: TransactionType!
+  occurredAt: DateTime!
+}
+
+enum TransactionType {
+  DEBIT
+  CREDIT
+}
+
+input UpdateTransactionInput {
+  id: ID!
+  description: String
+  amount: Float
+  type: TransactionType
+  occurredAt: DateTime
+  categoryId: ID
 }
 
 input CreateRecurringExpenseInput {

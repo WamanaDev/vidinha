@@ -155,6 +155,47 @@ describe("PluggyClientService", () => {
     });
   });
 
+  describe("getTransactions", () => {
+    it("chama GET /v2/transactions com accountId e repassa dateFrom/dateTo/after quando informados", async () => {
+      mockAuth();
+      fetchMock.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ results: [], next: null }),
+      });
+
+      const result = await service.getTransactions("account-1", {
+        dateFrom: "2026-01-01",
+        dateTo: "2026-09-01",
+        after: "cursor-abc",
+      });
+
+      expect(result).toEqual({ results: [], next: null });
+      const [url] = fetchMock.mock.calls[1];
+      expect(url).toContain("/v2/transactions?");
+      expect(decodeURIComponent(url)).toContain("accountId=account-1");
+      expect(decodeURIComponent(url)).toContain("dateFrom=2026-01-01");
+      expect(decodeURIComponent(url)).toContain("dateTo=2026-09-01");
+      expect(decodeURIComponent(url)).toContain("after=cursor-abc");
+    });
+
+    it("omite dateFrom/dateTo/after quando não informados", async () => {
+      mockAuth();
+      fetchMock.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ results: [], next: null }),
+      });
+
+      await service.getTransactions("account-1");
+
+      const [url] = fetchMock.mock.calls[1];
+      expect(url).not.toContain("dateFrom");
+      expect(url).not.toContain("dateTo");
+      expect(url).not.toContain("after");
+    });
+  });
+
   describe("createItem", () => {
     it("cria o item repassando connectorId e parameters, sem logar credenciais", async () => {
       mockAuth();

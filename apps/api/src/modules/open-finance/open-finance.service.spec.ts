@@ -9,7 +9,12 @@ import {
   ForbiddenAppException,
   NotFoundAppException,
 } from "@common/errors/app.exceptions";
-import { AuditAction, ConnectionStatus } from "@prisma/client";
+import {
+  AccountType,
+  AuditAction,
+  CardType,
+  ConnectionStatus,
+} from "@prisma/client";
 
 describe("OpenFinanceService", () => {
   let service: OpenFinanceService;
@@ -19,9 +24,13 @@ describe("OpenFinanceService", () => {
       findUnique: jest.Mock;
       upsert: jest.Mock;
       update: jest.Mock;
+      findUniqueOrThrow: jest.Mock;
     };
     institution: { upsert: jest.Mock };
     familyMember: { findUnique: jest.Mock };
+    account: { upsert: jest.Mock };
+    card: { upsert: jest.Mock };
+    transaction: { upsert: jest.Mock };
   };
   let pluggyClient: {
     getItem: jest.Mock;
@@ -30,6 +39,8 @@ describe("OpenFinanceService", () => {
     listConnectors: jest.Mock;
     createItem: jest.Mock;
     sendItemMfa: jest.Mock;
+    getAccounts: jest.Mock;
+    getTransactions: jest.Mock;
   };
   let auditLog: { record: jest.Mock };
   let accountsService: { toEntity: jest.Mock };
@@ -46,9 +57,13 @@ describe("OpenFinanceService", () => {
         findUnique: jest.fn(),
         upsert: jest.fn(),
         update: jest.fn(),
+        findUniqueOrThrow: jest.fn(),
       },
       institution: { upsert: jest.fn() },
       familyMember: { findUnique: jest.fn() },
+      account: { upsert: jest.fn() },
+      card: { upsert: jest.fn() },
+      transaction: { upsert: jest.fn() },
     };
     pluggyClient = {
       getItem: jest.fn(),
@@ -57,6 +72,8 @@ describe("OpenFinanceService", () => {
       listConnectors: jest.fn(),
       createItem: jest.fn(),
       sendItemMfa: jest.fn(),
+      getAccounts: jest.fn(),
+      getTransactions: jest.fn(),
     };
     auditLog = { record: jest.fn() };
     accountsService = { toEntity: jest.fn() };
@@ -394,6 +411,195 @@ describe("OpenFinanceService", () => {
         expect.objectContaining({ where: { userId } }),
       );
       expect(result).toHaveLength(1);
+    });
+  });
+
+  describe("syncConnection — sincronização de contas/cartões/transações", () => {
+    const pluggyItemId = "pluggy-item-1";
+
+    // Fakes em memória que simulam o comportamento real de `upsert` do Prisma
+    // (dedupe por chave natural), para verificar idempotência de verdade —
+    // não apenas contar chamadas de mock.
+    let fakeAccounts: Array<Record<string, unknown>>;
+    let fakeCards: Array<Record<string, unknown>>;
+    let fakeTransactions: Array<Record<string, unknown>>;
+
+    beforeEach(() => {
+      fakeAccounts = [];
+      fakeCards = [];
+      fakeTransactions = [];
+
+      prisma.openFinanceConnection.findUnique.mockResolvedValue({
+        id: connectionId,
+        userId,
+        pluggyItemId,
+      });
+      pluggyClient.triggerItemUpdate.mockResolvedValue({
+        id: pluggyItemId,
+        status: "UPDATED",
+        executionStatus: "SUCCESS",
+      });
+      prisma.openFinanceConnection.update.mockResolvedValue({
+        id: connectionId,
+        userId,
+        pluggyItemId,
+      });
+      prisma.openFinanceConnection.findUniqueOrThrow.mockResolvedValue({
+        id: connectionId,
+        status: ConnectionStatus.CONNECTED,
+        lastSyncedAt: new Date(),
+        createdAt: new Date(),
+        institution: { name: "Banco Teste", imageUrl: null },
+        accounts: [],
+      });
+      accountsService.toEntity.mockResolvedValue({});
+
+      pluggyClient.getAccounts.mockResolvedValue([
+        {
+          id: "pluggy-acc-1",
+          type: "BANK",
+          subtype: "CHECKING_ACCOUNT",
+          name: "Conta Corrente",
+          number: "12345678",
+          balance: 1000,
+          currencyCode: "BRL",
+        },
+        {
+          id: "pluggy-acc-2",
+          type: "CREDIT",
+          name: "Cartão de Crédito",
+          number: "98765432",
+          balance: 250,
+          currencyCode: "BRL",
+          creditData: { brand: "VISA", creditLimit: 5000 },
+        },
+      ]);
+
+      pluggyClient.getTransactions.mockResolvedValue({
+        results: [
+          {
+            id: "pluggy-tx-1",
+            description: "Compra no mercado",
+            amount: 50,
+            date: "2026-09-01",
+            currencyCode: "BRL",
+            type: "DEBIT",
+            status: "POSTED",
+            accountId: "pluggy-acc-1",
+          },
+        ],
+        next: null,
+      });
+
+      prisma.account.upsert.mockImplementation(
+        async ({ where, update, create }) => {
+          const idx = fakeAccounts.findIndex(
+            (a) => a.pluggyAccountId === where.pluggyAccountId,
+          );
+          if (idx >= 0) {
+            fakeAccounts[idx] = { ...fakeAccounts[idx], ...update };
+            return fakeAccounts[idx];
+          }
+          const row = { id: `account-${fakeAccounts.length + 1}`, ...create };
+          fakeAccounts.push(row);
+          return row;
+        },
+      );
+
+      prisma.card.upsert.mockImplementation(
+        async ({ where, update, create }) => {
+          const idx = fakeCards.findIndex(
+            (c) => c.pluggyAccountId === where.pluggyAccountId,
+          );
+          if (idx >= 0) {
+            fakeCards[idx] = { ...fakeCards[idx], ...update };
+            return fakeCards[idx];
+          }
+          const row = { id: `card-${fakeCards.length + 1}`, ...create };
+          fakeCards.push(row);
+          return row;
+        },
+      );
+
+      prisma.transaction.upsert.mockImplementation(
+        async ({ where, update, create }) => {
+          const key = where.externalId_accountId_cardId;
+          const idx = fakeTransactions.findIndex(
+            (t) =>
+              t.externalId === key.externalId &&
+              (t.accountId ?? null) === (key.accountId ?? null) &&
+              (t.cardId ?? null) === (key.cardId ?? null),
+          );
+          if (idx >= 0) {
+            fakeTransactions[idx] = { ...fakeTransactions[idx], ...update };
+            return fakeTransactions[idx];
+          }
+          const row = {
+            id: `transaction-${fakeTransactions.length + 1}`,
+            ...create,
+          };
+          fakeTransactions.push(row);
+          return row;
+        },
+      );
+    });
+
+    it("mapeia conta Pluggy type=BANK para Account e type=CREDIT para Card", async () => {
+      await service.syncConnection(userId, connectionId);
+
+      expect(fakeAccounts).toHaveLength(1);
+      expect(fakeAccounts[0]).toMatchObject({
+        pluggyAccountId: "pluggy-acc-1",
+        type: AccountType.CHECKING,
+        connectionId,
+        ownerId: userId,
+      });
+
+      expect(fakeCards).toHaveLength(1);
+      expect(fakeCards[0]).toMatchObject({
+        pluggyAccountId: "pluggy-acc-2",
+        type: CardType.CREDIT,
+        brand: "VISA",
+        creditLimit: 5000,
+        connectionId,
+        ownerId: userId,
+      });
+    });
+
+    it("nunca loga saldo/número de conta ao sincronizar", async () => {
+      const logSpy = jest.spyOn(
+        (service as unknown as { logger: { log: (msg: string) => void } })
+          .logger,
+        "log",
+      );
+
+      await service.syncConnection(userId, connectionId);
+
+      const loggedMessages = logSpy.mock.calls.map((call) => String(call[0]));
+      expect(loggedMessages.join("\n")).not.toContain("1000");
+      expect(loggedMessages.join("\n")).not.toContain("12345678");
+    });
+
+    it("é idempotente: rodar a sincronização duas vezes não duplica accounts/cards/transactions", async () => {
+      await service.syncConnection(userId, connectionId);
+      await service.syncConnection(userId, connectionId);
+
+      expect(fakeAccounts).toHaveLength(1);
+      expect(fakeCards).toHaveLength(1);
+      // Uma transação por recurso sincronizado (conta + cartão), nunca duplicada.
+      expect(fakeTransactions).toHaveLength(2);
+    });
+
+    it("não propaga erro do Pluggy ao sincronizar (falha é logada, não derruba o fluxo principal)", async () => {
+      pluggyClient.getAccounts.mockRejectedValue(
+        new Error("Pluggy fora do ar"),
+      );
+
+      await expect(
+        service.syncConnection(userId, connectionId),
+      ).resolves.toBeDefined();
+
+      expect(prisma.account.upsert).not.toHaveBeenCalled();
     });
   });
 });

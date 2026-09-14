@@ -3,7 +3,9 @@ import { TransactionsService } from "./transactions.service";
 import { PrismaService } from "@prisma-module/prisma.service";
 import { SharingPermissionsService } from "@modules/sharing-permissions/sharing-permissions.service";
 import { AccountsService } from "@modules/accounts/accounts.service";
+import { AuditLogService } from "@modules/audit-log/audit-log.service";
 import {
+  BadUserInputAppException,
   ForbiddenAppException,
   NotFoundAppException,
 } from "@common/errors/app.exceptions";
@@ -22,18 +24,26 @@ describe("TransactionsService", () => {
       findMany: jest.Mock;
       findFirst: jest.Mock;
     };
-    account: { findMany: jest.Mock };
-    card: { findMany: jest.Mock };
+    account: {
+      findMany: jest.Mock;
+      findUnique: jest.Mock;
+      update: jest.Mock;
+    };
+    card: { findMany: jest.Mock; findUnique: jest.Mock; update: jest.Mock };
     category: { findMany: jest.Mock; findUnique: jest.Mock };
     transaction: {
       count: jest.Mock;
       findMany: jest.Mock;
       findUnique: jest.Mock;
       update: jest.Mock;
+      create: jest.Mock;
+      delete: jest.Mock;
     };
+    $transaction: jest.Mock;
   };
   let sharingPermissions: { findActiveByResourceIds: jest.Mock };
   let accountsService: { toEntity: jest.Mock };
+  let auditLog: { record: jest.Mock };
 
   const familyId = "family-1";
   const ownerId = "owner-1";
@@ -57,6 +67,7 @@ describe("TransactionsService", () => {
     maskedNumber: null,
     currency: "BRL",
     balance: "100.00",
+    isManual: true,
     archivedAt: null,
     owner,
   };
@@ -87,18 +98,30 @@ describe("TransactionsService", () => {
         findMany: jest.fn(),
         findFirst: jest.fn(),
       },
-      account: { findMany: jest.fn() },
-      card: { findMany: jest.fn() },
+      account: {
+        findMany: jest.fn(),
+        findUnique: jest.fn(),
+        update: jest.fn(),
+      },
+      card: { findMany: jest.fn(), findUnique: jest.fn(), update: jest.fn() },
       category: { findMany: jest.fn(), findUnique: jest.fn() },
       transaction: {
         count: jest.fn(),
         findMany: jest.fn(),
         findUnique: jest.fn(),
         update: jest.fn(),
+        create: jest.fn(),
+        delete: jest.fn(),
       },
+      $transaction: jest.fn(),
     };
+    // Simula `prisma.$transaction(async (tx) => ...)` reutilizando o mesmo
+    // mock (o "tx" tem a mesma interface parcial usada pelo service).
+    prisma.$transaction.mockImplementation(async (cb: any) => cb(prisma));
+
     sharingPermissions = { findActiveByResourceIds: jest.fn() };
     accountsService = { toEntity: jest.fn() };
+    auditLog = { record: jest.fn() };
 
     const moduleRef = await Test.createTestingModule({
       providers: [
@@ -106,6 +129,7 @@ describe("TransactionsService", () => {
         { provide: PrismaService, useValue: prisma },
         { provide: SharingPermissionsService, useValue: sharingPermissions },
         { provide: AccountsService, useValue: accountsService },
+        { provide: AuditLogService, useValue: auditLog },
       ],
     }).compile();
 
@@ -366,6 +390,219 @@ describe("TransactionsService", () => {
           categoryId: "nao-existe",
         }),
       ).rejects.toBeInstanceOf(NotFoundAppException);
+    });
+  });
+
+  describe("createManual", () => {
+    it("lança BadUserInputAppException quando accountId e cardId são informados juntos", async () => {
+      await expect(
+        service.createManual(ownerId, {
+          accountId: account.id,
+          cardId: "card-1",
+          description: "Mercado",
+          amount: 50,
+          type: TransactionType.DEBIT,
+          occurredAt: new Date(),
+        } as any),
+      ).rejects.toBeInstanceOf(BadUserInputAppException);
+    });
+
+    it("lança BadUserInputAppException quando nenhum dos dois é informado", async () => {
+      await expect(
+        service.createManual(ownerId, {
+          description: "Mercado",
+          amount: 50,
+          type: TransactionType.DEBIT,
+          occurredAt: new Date(),
+        } as any),
+      ).rejects.toBeInstanceOf(BadUserInputAppException);
+    });
+
+    it("cria a transação e diminui o saldo da conta (DEBIT)", async () => {
+      prisma.account.findUnique.mockResolvedValue(account);
+      prisma.transaction.create.mockResolvedValue(baseTx);
+      prisma.familyMember.findFirst.mockResolvedValue({ familyId });
+
+      const result = await service.createManual(ownerId, {
+        accountId: account.id,
+        description: "Mercado",
+        amount: 50,
+        type: TransactionType.DEBIT,
+        occurredAt: new Date("2024-01-10T00:00:00.000Z"),
+      });
+
+      expect(prisma.account.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: account.id },
+          data: expect.objectContaining({ balance: { increment: -50 } }),
+        }),
+      );
+      expect(auditLog.record).toHaveBeenCalledWith(
+        expect.objectContaining({ actorId: ownerId, familyId }),
+      );
+      expect(result.id).toBe(baseTx.id);
+    });
+
+    it("aumenta o saldo da conta em uma transação CREDIT", async () => {
+      prisma.account.findUnique.mockResolvedValue(account);
+      prisma.transaction.create.mockResolvedValue(baseTx);
+      prisma.familyMember.findFirst.mockResolvedValue({ familyId });
+
+      await service.createManual(ownerId, {
+        accountId: account.id,
+        description: "Salário",
+        amount: 1000,
+        type: TransactionType.CREDIT,
+        occurredAt: new Date(),
+      });
+
+      expect(prisma.account.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ balance: { increment: 1000 } }),
+        }),
+      );
+    });
+
+    it("rejeita lançar transação em conta não-manual (sincronizada via Open Finance)", async () => {
+      prisma.account.findUnique.mockResolvedValue({
+        ...account,
+        isManual: false,
+      });
+
+      await expect(
+        service.createManual(ownerId, {
+          accountId: account.id,
+          description: "Mercado",
+          amount: 50,
+          type: TransactionType.DEBIT,
+          occurredAt: new Date(),
+        }),
+      ).rejects.toBeInstanceOf(BadUserInputAppException);
+      expect(prisma.transaction.create).not.toHaveBeenCalled();
+    });
+
+    it("cria a transação em um cartão manual e aumenta a fatura (DEBIT)", async () => {
+      const manualCard = {
+        id: "card-manual",
+        ownerId,
+        isManual: true,
+        archivedAt: null,
+        currentInvoice: "0.00",
+      };
+      prisma.card.findUnique.mockResolvedValue(manualCard);
+      prisma.transaction.create.mockResolvedValue({
+        ...baseTx,
+        accountId: null,
+        cardId: manualCard.id,
+        account: null,
+        card: { ...manualCard, owner },
+      });
+      prisma.familyMember.findFirst.mockResolvedValue({ familyId });
+
+      await service.createManual(ownerId, {
+        cardId: manualCard.id,
+        description: "Compra",
+        amount: 200,
+        type: TransactionType.DEBIT,
+        occurredAt: new Date(),
+      });
+
+      expect(prisma.card.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: manualCard.id },
+          data: expect.objectContaining({ currentInvoice: { increment: 200 } }),
+        }),
+      );
+    });
+
+    it("rejeita lançar transação em conta de outro usuário", async () => {
+      prisma.account.findUnique.mockResolvedValue(account);
+
+      await expect(
+        service.createManual(outsiderId, {
+          accountId: account.id,
+          description: "Mercado",
+          amount: 50,
+          type: TransactionType.DEBIT,
+          occurredAt: new Date(),
+        }),
+      ).rejects.toBeInstanceOf(ForbiddenAppException);
+      expect(prisma.transaction.create).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("updateManual", () => {
+    it("permite que o dono edite o valor e ajusta a diferença no saldo", async () => {
+      prisma.transaction.findUnique.mockResolvedValue(baseTx);
+      prisma.transaction.update.mockResolvedValue({
+        ...baseTx,
+        amount: "80.00",
+      });
+      prisma.familyMember.findFirst.mockResolvedValue({ familyId });
+
+      await service.updateManual(ownerId, {
+        id: baseTx.id,
+        amount: 80,
+      });
+
+      // baseTx é DEBIT de 50 (delta -50); novo é DEBIT de 80 (delta -80) -> diff -30.
+      expect(prisma.account.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ balance: { increment: -30 } }),
+        }),
+      );
+    });
+
+    it("rejeita editar uma transação que não é MANUAL", async () => {
+      prisma.transaction.findUnique.mockResolvedValue({
+        ...baseTx,
+        source: "OPEN_FINANCE",
+      });
+
+      await expect(
+        service.updateManual(ownerId, { id: baseTx.id, amount: 10 }),
+      ).rejects.toBeInstanceOf(ForbiddenAppException);
+      expect(prisma.transaction.update).not.toHaveBeenCalled();
+    });
+
+    it("rejeita edição por quem não é dono", async () => {
+      prisma.transaction.findUnique.mockResolvedValue(baseTx);
+
+      await expect(
+        service.updateManual(memberId, { id: baseTx.id, amount: 10 }),
+      ).rejects.toBeInstanceOf(ForbiddenAppException);
+    });
+  });
+
+  describe("deleteManual", () => {
+    it("exclui a transação e reverte o efeito no saldo", async () => {
+      prisma.transaction.findUnique.mockResolvedValue(baseTx);
+      prisma.familyMember.findFirst.mockResolvedValue({ familyId });
+
+      const result = await service.deleteManual(ownerId, baseTx.id);
+
+      // baseTx é DEBIT de 50 (delta -50); reverter = +50.
+      expect(prisma.account.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ balance: { increment: 50 } }),
+        }),
+      );
+      expect(prisma.transaction.delete).toHaveBeenCalledWith({
+        where: { id: baseTx.id },
+      });
+      expect(result).toBe(true);
+    });
+
+    it("rejeita excluir uma transação que não é MANUAL", async () => {
+      prisma.transaction.findUnique.mockResolvedValue({
+        ...baseTx,
+        source: "OPEN_FINANCE",
+      });
+
+      await expect(
+        service.deleteManual(ownerId, baseTx.id),
+      ).rejects.toBeInstanceOf(ForbiddenAppException);
+      expect(prisma.transaction.delete).not.toHaveBeenCalled();
     });
   });
 });

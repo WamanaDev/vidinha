@@ -7,10 +7,17 @@
 ## 1. Contrato GraphQL (SDL)
 
 ```graphql
+# Enum real do schema Prisma (fonte de verdade) — o rascunho original deste
+# contrato listava CHECKING/SAVINGS/CREDIT_CARD_WALLET, que nunca existiu no
+# schema Prisma; CASH ("Carteira") e CRYPTO ("Carteira digital") foram
+# adicionados para suportar contas 100% manuais (sem Open Finance).
 enum AccountType {
   CHECKING
   SAVINGS
-  CREDIT_CARD_WALLET
+  INVESTMENT
+  CASH
+  CRYPTO
+  OTHER
 }
 
 type Account implements Node {
@@ -31,12 +38,38 @@ input UpdateAccountSharingInput {
   fullDetailShared: Boolean!
 }
 
+# Cadastro manual de conta (sem Open Finance) — sempre cria com
+# `isManual: true`, `connectionId: null`. `familyId` só é usado para checar
+# que o chamador é membro ativo da família (a conta pertence ao usuário via
+# `ownerId`, não à família).
+input CreateAccountInput {
+  familyId: ID!
+  name: String!
+  type: AccountType!
+  maskedNumber: String
+  balance: Float! # saldo inicial
+  currency: String # default "BRL"
+}
+
+# Edição de conta manual. Só permitido quando `isManual: true` e o chamador
+# é o dono (checado no service). `type` não é editável após a criação.
+input UpdateAccountInput {
+  id: ID!
+  name: String
+  maskedNumber: String
+  currency: String
+  balance: Float # permite corrigir o saldo manualmente
+}
+
 type Query {
   accounts(familyId: ID!): [Account!]!
 }
 
 type Mutation {
   updateAccountSharing(input: UpdateAccountSharingInput!): Account!
+  createAccount(input: CreateAccountInput!): Account!
+  updateAccount(input: UpdateAccountInput!): Account!
+  archiveAccount(id: ID!): Boolean! # soft-delete (archivedAt), só isManual + dono
 }
 ```
 
@@ -47,8 +80,9 @@ type Mutation {
 - Visão do outro integrante: por padrão, **valores consolidados** (totais por categoria/mês); ver o extrato transação-a-transação de uma conta exige que o dono tenha habilitado `fullDetailShared` para aquela conta especificamente — `sharedWithFamily: true` sozinho não libera o detalhe.
 - `updateAccountSharing` só pode ser executada pelo **dono** da conta (`owner`) — checagem de posse no service (nunca no DTO), consistente com a convenção 2.3 de [`../../00-overview.md`](../../00-overview.md).
 - Autorização de leitura (`accounts(familyId)`): o dono sempre vê suas próprias contas; os demais membros da família só veem contas com `sharedWithFamily: true` — reaproveitar a mesma lógica de ABAC do `AbilityFactory` documentada para `Transaction` em [`../../common/casl-ability-factory.md §2`](../../common/casl-ability-factory.md), adaptada ao subject `Account`.
-- Contas vêm de duas origens possíveis: importadas via Open Finance (`connection` preenchido, ver [`../open-finance/open-finance.module.md`](../open-finance/open-finance.module.md)) ou, potencialmente, cadastradas manualmente no futuro — o campo `connection` é nulável para suportar ambos os casos.
+- Contas vêm de duas origens possíveis: importadas via Open Finance (`connection` preenchido, ver [`../open-finance/open-finance.module.md`](../open-finance/open-finance.module.md)) ou cadastradas manualmente (`isManual: true`, `connectionId: null`) — ver [`../../00-overview.md`](../../00-overview.md).
 - Alteração de `sharedWithFamily`/`fullDetailShared` é evento auditável (mudança em dados compartilhados, conforme `00-DECISIONS.md §9`) — ver [`../audit-log/audit-log.module.md`](../audit-log/audit-log.module.md).
+- **CRUD manual** (`createAccount`/`updateAccount`/`archiveAccount`): permite cadastrar contas 100% manuais, incluindo "Carteira" (`AccountType.CASH`) e "Carteira digital" (`AccountType.CRYPTO`), além de qualquer outro tipo. `createAccount` sempre cria com `isManual: true`, `connectionId: null`, e a conta nasce privada (sem `SharingPermission`) — compartilhamento continua sendo sempre um passo manual posterior via `updateAccountSharing`. `updateAccount`/`archiveAccount` só funcionam em contas com `isManual: true` e exigem que o chamador seja o dono — uma conta sincronizada via Open Finance é somente leitura (exceto compartilhamento). `archiveAccount` faz soft-delete via `archivedAt`; contas arquivadas somem de `accounts(familyId)` mas preservam o histórico de transações. Eventos `ACCOUNT_CREATED`/`ACCOUNT_UPDATED`/`ACCOUNT_ARCHIVED` são auditados (ver `audit-log.module.md`), sem incluir o valor do saldo no metadata.
 
 ## 3. Estrutura de arquivos esperada (seguindo o padrão `family`)
 

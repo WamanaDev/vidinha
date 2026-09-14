@@ -3,6 +3,8 @@ import { CurrentUser } from "@common/decorators/current-user.decorator";
 import { AuthUser } from "@common/types/auth-user.type";
 import { CardsService } from "./cards.service";
 import { UpdateCardSharingInput } from "./dto/update-card-sharing.input";
+import { CreateCardInput } from "./dto/create-card.input";
+import { UpdateCardInput } from "./dto/update-card.input";
 import { Card } from "./entities/card.entity";
 
 /**
@@ -27,5 +29,29 @@ export class CardsResolver {
     @Args("input") input: UpdateCardSharingInput,
   ): Promise<Card> {
     return this.cardsService.updateSharing(user.userId, input);
+  }
+
+  @Mutation(() => Card)
+  async createCard(
+    @CurrentUser() user: AuthUser,
+    @Args("input") input: CreateCardInput,
+  ): Promise<Card> {
+    return this.cardsService.create(user.userId, input);
+  }
+
+  @Mutation(() => Card)
+  async updateCard(
+    @CurrentUser() user: AuthUser,
+    @Args("input") input: UpdateCardInput,
+  ): Promise<Card> {
+    return this.cardsService.updateManual(user.userId, input);
+  }
+
+  @Mutation(() => Boolean)
+  async archiveCard(
+    @CurrentUser() user: AuthUser,
+    @Args("id", { type: () => ID }) id: string,
+  ): Promise<boolean> {
+    return this.cardsService.archive(user.userId, id);
   }
 }
