@@ -16,11 +16,11 @@ import { AvatarUploadUrlPayload } from "./entities/avatar-upload-url-payload.ent
  * specs/security/file-uploads.md). A extensão de cada entrada é usada para
  * montar o path `<userId>/avatar.<extensão>`.
  */
-const ALLOWED_AVATAR_MIME_TYPES: Record<string, string> = {
-  "image/jpeg": "jpg",
-  "image/png": "png",
-  "image/webp": "webp",
-};
+const ALLOWED_AVATAR_MIME_TYPES = new Map<string, string>([
+  ["image/jpeg", "jpg"],
+  ["image/png", "png"],
+  ["image/webp", "webp"],
+]);
 
 @Injectable()
 export class AuthService {
@@ -60,7 +60,7 @@ export class AuthService {
     userId: string,
     mimeType: string,
   ): Promise<AvatarUploadUrlPayload> {
-    const extension = ALLOWED_AVATAR_MIME_TYPES[mimeType];
+    const extension = ALLOWED_AVATAR_MIME_TYPES.get(mimeType);
     if (!extension) {
       throw new BadUserInputAppException(
         "Tipo de arquivo não suportado. Utilize JPEG, PNG ou WEBP.",

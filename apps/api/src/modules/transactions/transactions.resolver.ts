@@ -1,5 +1,6 @@
 import { Resolver, Query, Mutation, Args, Int, ID } from "@nestjs/graphql";
 import { CurrentUser } from "@common/decorators/current-user.decorator";
+import { ThrottleMutationWrite } from "@common/decorators/throttle-named.decorator";
 import { AuthUser } from "@common/types/auth-user.type";
 import { GraphQLCursor } from "@common/types/cursor.scalar";
 import { TransactionsService } from "./transactions.service";
@@ -60,6 +61,7 @@ export class TransactionsResolver {
     );
   }
 
+  @ThrottleMutationWrite()
   @Mutation(() => Transaction)
   async createTransaction(
     @CurrentUser() user: AuthUser,
@@ -68,6 +70,7 @@ export class TransactionsResolver {
     return this.transactionsService.createManual(user.userId, input);
   }
 
+  @ThrottleMutationWrite()
   @Mutation(() => Transaction)
   async updateTransaction(
     @CurrentUser() user: AuthUser,
@@ -76,6 +79,7 @@ export class TransactionsResolver {
     return this.transactionsService.updateManual(user.userId, input);
   }
 
+  @ThrottleMutationWrite()
   @Mutation(() => Boolean)
   async deleteTransaction(
     @CurrentUser() user: AuthUser,
