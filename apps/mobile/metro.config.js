@@ -16,9 +16,33 @@ const config = getDefaultConfig(projectRoot);
 // nunca são encontrados em runtime, mesmo existindo em disco.
 config.resolver.unstable_enableSymlinks = true;
 
-// Deixa o Metro observar a raiz do monorepo (onde o node_modules/.pnpm real
+// Deixa o Metro observar a raiz do monorepo (onde o node_modules real
 // vive), não só apps/mobile.
-config.watchFolders = [workspaceRoot];
+//
+// Se existir um .npmrc local (não versionado — ver README) apontando
+// virtual-store-dir para fora do workspace (necessário no Windows para
+// evitar o limite de 260 caracteres em builds nativos do Android), o pnpm
+// resolve os symlinks de node_modules para lá. Sem observar essa pasta
+// também, o crawler do Metro nunca indexa esses arquivos e a resolução via
+// symlink falha com "Unable to resolve module", mesmo o arquivo existindo
+// em disco. (O HMR quebrando nesse cenário é um bug separado do Metro,
+// contornado via patches/metro@0.80.12.patch.)
+const fs = require("node:fs");
+const watchFolders = [workspaceRoot];
+try {
+  const npmrcPath = path.resolve(workspaceRoot, ".npmrc");
+  const npmrc = fs.readFileSync(npmrcPath, "utf8");
+  const match = npmrc.match(/^\s*virtual-store-dir\s*=\s*(.+)\s*$/m);
+  if (match) {
+    const storeDir = path.resolve(workspaceRoot, match[1].trim());
+    if (fs.existsSync(storeDir) && !storeDir.startsWith(workspaceRoot)) {
+      watchFolders.push(storeDir);
+    }
+  }
+} catch {
+  // Sem .npmrc local — comportamento padrão (store dentro do workspace).
+}
+config.watchFolders = watchFolders;
 
 // Procura módulos tanto em apps/mobile/node_modules quanto na raiz do
 // workspace, na ordem certa.

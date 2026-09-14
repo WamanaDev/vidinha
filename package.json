@@ -38,5 +38,10 @@
     "*.md": [
       "prettier --write"
     ]
+  },
+  "pnpm": {
+    "patchedDependencies": {
+      "metro@0.80.12": "patches/metro@0.80.12.patch"
+    }
   }
 }

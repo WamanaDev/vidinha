@@ -1,4 +1,4 @@
-import { useCallback } from "react";
+import { useCallback, useMemo } from "react";
 import { ScrollView, StyleSheet, View, Text } from "react-native";
 import { useRouter } from "expo-router";
 import {
@@ -10,26 +10,41 @@ import {
 } from "lucide-react-native";
 import { Skeleton } from "@components/Skeleton";
 import { ErrorState } from "@components/ErrorState";
+import { Card } from "@components/Card";
+import { ListItem } from "@components/ListItem";
+import { Amount } from "@components/Amount";
+import { Button } from "@components/Button";
 import { useAuth } from "@lib/authContext";
 import { useActiveFamily } from "@lib/activeFamilyContext";
+import { useMyFamilies } from "@features/family/hooks/useFamily";
 import { useDashboardSummary } from "@features/dashboard/hooks/useDashboardSummary";
 import { TabShortcutCard } from "@features/dashboard/components/TabShortcutCard";
 import { useTokens } from "@config/theme";
 import { type as typeScale } from "@config/theme/typography";
 import { space } from "@config/theme/spacing";
 import type { GraphQLApiError } from "@lib/graphqlClient";
+import { mapErrorCodeToMessage } from "@lib/errorMapping";
+import type { TransactionEdge } from "@app-types/graphql-generated";
 
 // specs/mobile/routes/tabs/home.md — rota `/(app)/(tabs)/`.
-// SUPOSIÇÃO: ver `src/features/dashboard/hooks/useDashboardSummary.ts` — a
-// spec pede um dashboard consolidado (accounts+cards+transactions+recurring),
-// mas nenhuma dessas queries de listagem existe pronta no SDL real além de
-// `myFamilies`. A instrução da tarefa autoriza explicitamente uma v1 simples:
-// nome/famílias do usuário + atalhos para as outras abas.
+// Compõe `myFamilies` (nome/família ativa) com `useDashboardSummary`
+// (accounts + cards + últimas transações — todas queries reais desde a Fase
+// 0 de sync do Open Finance). `recurringExpenses(familyId)`, citada na spec,
+// não existe no SDL real — fora do escopo desta v1.
 export default function HomeScreen() {
   const router = useRouter();
   const { session } = useAuth();
   const { familyId } = useActiveFamily();
-  const { data, isLoading, isError, error, refetch } = useDashboardSummary();
+  const { data: familiesData } = useMyFamilies();
+  const {
+    accounts,
+    cards,
+    recentTransactions,
+    isLoading,
+    isError,
+    error,
+    refetch,
+  } = useDashboardSummary();
   const tokens = useTokens();
 
   const goToAccounts = useCallback(
@@ -52,6 +67,25 @@ export default function HomeScreen() {
     () => router.push("/(app)/settings"),
     [router],
   );
+  const handlePressTransaction = useCallback(
+    (id: string) => router.push(`/transaction/${id}`),
+    [router],
+  );
+
+  // Soma o saldo das contas visíveis. Cartão não entra na soma de saldo:
+  // `currentInvoice` representa uma fatura em aberto (dívida), não dinheiro
+  // disponível — misturar os dois num único total daria uma leitura
+  // financeira errada. Mostramos as duas somas separadas.
+  const totalAccountsBalance = useMemo(
+    () => accounts.reduce((sum, account) => sum + account.balance, 0),
+    [accounts],
+  );
+  const totalCardsInvoice = useMemo(
+    () => cards.reduce((sum, card) => sum + (card.currentInvoice ?? 0), 0),
+    [cards],
+  );
+
+  const hasFinancialData = accounts.length > 0 || cards.length > 0;
 
   if (isLoading) {
     return (
@@ -69,16 +103,17 @@ export default function HomeScreen() {
   }
 
   if (isError) {
+    const apiError = error as GraphQLApiError | undefined;
     return (
       <ErrorState
-        description={(error as GraphQLApiError)?.message}
-        errorCode={(error as GraphQLApiError)?.code}
+        description={mapErrorCodeToMessage(apiError?.code)}
+        errorCode={apiError?.code}
         onRetry={refetch}
       />
     );
   }
 
-  const activeFamily = data?.myFamilies.find(
+  const activeFamily = familiesData?.myFamilies.find(
     (membership) => membership.family.id === familyId,
   )?.family;
   // SUPOSIÇÃO: `useAuth()` (@lib/authContext.tsx) só expõe a `Session` bruta do
@@ -105,6 +140,84 @@ export default function HomeScreen() {
           </Text>
         ) : null}
       </View>
+
+      {hasFinancialData ? (
+        <>
+          <View style={{ gap: space[3] }}>
+            {accounts.length > 0 ? (
+              <Card padding="md">
+                <Text
+                  style={[typeScale.labelSm, { color: tokens.text.secondary }]}
+                >
+                  Saldo em contas
+                </Text>
+                <Amount value={totalAccountsBalance} variant="large" />
+              </Card>
+            ) : null}
+            {cards.length > 0 ? (
+              <Card padding="md">
+                <Text
+                  style={[typeScale.labelSm, { color: tokens.text.secondary }]}
+                >
+                  Faturas em aberto
+                </Text>
+                <Amount value={totalCardsInvoice} variant="large" />
+              </Card>
+            ) : null}
+          </View>
+
+          <View style={{ gap: space[3] }}>
+            <View
+              style={{
+                flexDirection: "row",
+                justifyContent: "space-between",
+                alignItems: "center",
+              }}
+            >
+              <Text style={[typeScale.h3, { color: tokens.text.primary }]}>
+                Últimos lançamentos
+              </Text>
+              <Button
+                label="Ver todas"
+                variant="ghost"
+                size="sm"
+                onPress={goToTransactions}
+              />
+            </View>
+            {recentTransactions.length > 0 ? (
+              <Card padding="none">
+                {recentTransactions.map((edge: TransactionEdge, index) => (
+                  <View key={edge.node.id}>
+                    <ListItem
+                      title={edge.node.description}
+                      subtitle={new Date(edge.node.date).toLocaleDateString(
+                        "pt-BR",
+                      )}
+                      rightElement={
+                        <Amount value={edge.node.amount} colorByValue />
+                      }
+                      onPress={() => handlePressTransaction(edge.node.id)}
+                    />
+                    {index < recentTransactions.length - 1 ? (
+                      <View
+                        style={{
+                          height: 1,
+                          backgroundColor: tokens.border.default,
+                          marginLeft: space[4],
+                        }}
+                      />
+                    ) : null}
+                  </View>
+                ))}
+              </Card>
+            ) : (
+              <Text style={[typeScale.body, { color: tokens.text.secondary }]}>
+                Vocês ainda não têm lançamentos por aqui.
+              </Text>
+            )}
+          </View>
+        </>
+      ) : null}
 
       <View
         style={{

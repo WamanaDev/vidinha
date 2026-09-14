@@ -1,16 +1,69 @@
-import { useMyFamilies } from "@features/family/hooks/useFamily";
+import { useMemo } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { useAccounts } from "@features/accounts/hooks/useAccounts";
+import { useCards } from "@features/cards/hooks/useCards";
+import { fetchTransactions } from "@features/transactions/services/transactions.graphql";
+import { useActiveFamily } from "@lib/activeFamilyContext";
+import type { TransactionEdge } from "@app-types/graphql-generated";
 
-// SUPOSIÇÃO: specs/mobile/routes/tabs/home.md descreve um dashboard composto
-// por `accounts(familyId)`, `cards(familyId)`, `transactions(...)` e
-// `recurringExpenses(familyId)` — nenhuma dessas quatro queries de listagem
-// direta existe no SDL real hoje (accounts/cards só existem via
-// `openFinanceConnections`, e não há `recurringExpenses` nenhuma). Para não
-// inventar chamadas contra queries inexistentes, a v1 do Início usa apenas
-// `myFamilies` (real, já usado por `ActiveFamilyProvider`) para mostrar
-// nome/famílias do usuário e oferecer atalhos para as outras abas — conforme
-// a instrução explícita da tarefa ("não precisa ser sofisticado, é a v1").
-// Quando o backend expuser as queries de resumo financeiro, esta função passa
-// a compor todas elas.
+const RECENT_TRANSACTIONS_COUNT = 5;
+
+/**
+ * Compõe o resumo financeiro do Início: `accounts(familyId)`,
+ * `cards(familyId)` e as `RECENT_TRANSACTIONS_COUNT` transações mais recentes
+ * (`transactions(filter: {familyId}, first: 5)`, sem `orderBy` explícito —
+ * o default do SDL já é `DATE DESC`, conforme
+ * packages/graphql-schema/schema.graphql). As três queries já existem e
+ * funcionam desde a Fase 0 de sync real do Open Finance.
+ *
+ * `recurringExpenses(familyId)` citada em specs/mobile/routes/tabs/home.md
+ * não existe no SDL real — mantida fora do escopo desta v1, conforme
+ * instrução explícita da tarefa (não inventar chamadas contra queries
+ * inexistentes).
+ */
 export function useDashboardSummary() {
-  return useMyFamilies();
+  const { familyId } = useActiveFamily();
+
+  const accountsQuery = useAccounts(familyId);
+  const cardsQuery = useCards(familyId);
+
+  const transactionsQuery = useQuery({
+    queryKey: ["dashboard-transactions", familyId],
+    queryFn: () =>
+      fetchTransactions({
+        filter: { familyId },
+        first: RECENT_TRANSACTIONS_COUNT,
+      }),
+    enabled: Boolean(familyId),
+  });
+
+  const recentTransactions: TransactionEdge[] = useMemo(
+    () => transactionsQuery.data?.transactions.edges ?? [],
+    [transactionsQuery.data],
+  );
+
+  const isLoading =
+    accountsQuery.isLoading ||
+    cardsQuery.isLoading ||
+    transactionsQuery.isLoading;
+  const isError =
+    accountsQuery.isError || cardsQuery.isError || transactionsQuery.isError;
+  const error =
+    accountsQuery.error ?? cardsQuery.error ?? transactionsQuery.error;
+
+  function refetch() {
+    accountsQuery.refetch();
+    cardsQuery.refetch();
+    transactionsQuery.refetch();
+  }
+
+  return {
+    accounts: accountsQuery.accounts,
+    cards: cardsQuery.data?.cards ?? [],
+    recentTransactions,
+    isLoading,
+    isError,
+    error,
+    refetch,
+  };
 }

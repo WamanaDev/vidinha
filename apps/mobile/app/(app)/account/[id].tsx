@@ -1,4 +1,5 @@
-import { ScrollView, Text, View } from "react-native";
+import { useCallback, useState } from "react";
+import { Alert, ScrollView, Text, View } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { Amount } from "@components/Amount";
 import { Button } from "@components/Button";
@@ -14,14 +15,10 @@ import {
   useAccounts,
   findAccountById,
 } from "@features/accounts/hooks/useAccounts";
+import { useArchiveAccount } from "@features/accounts/hooks/useAccountActions";
 import type { GraphQLApiError } from "@lib/graphqlClient";
-
-const ACCOUNT_TYPE_LABEL: Record<string, string> = {
-  CHECKING: "Conta corrente",
-  SAVINGS: "Poupança",
-  INVESTMENT: "Investimento",
-  OTHER: "Outra",
-};
+import { mapErrorCodeToMessage } from "@lib/errorMapping";
+import { ACCOUNT_TYPE_LABELS } from "@features/accounts/accountTypeLabels";
 
 // specs/mobile/routes/stack/account-detail.md — rota `/(app)/account/[id]`.
 // Não há query singular `account(id)` no SDL real — a conta é derivada da
@@ -34,8 +31,42 @@ export default function AccountDetailScreen() {
 
   const { accounts, isLoading, isError, error, refetch } =
     useAccounts(familyId);
+  const archiveAccount = useArchiveAccount(familyId);
+  const [archiveError, setArchiveError] = useState<string | null>(null);
 
   const handleGoBack = () => router.replace("/(app)/(tabs)/accounts");
+
+  const account = findAccountById(accounts, id);
+
+  // Precisa vir antes dos `return`s condicionais abaixo (regras de hooks —
+  // claude.md/eslint `react-hooks/rules-of-hooks`).
+  const handleArchive = useCallback(() => {
+    if (!account) return;
+    // Ação destrutiva — sempre com confirmação (claude.md §"nunca destrutivo
+    // sem confirmação", mesmo padrão de `open-finance/connections.tsx`).
+    Alert.alert(
+      "Arquivar conta",
+      `${account.name} vai deixar de aparecer nas suas contas. Os lançamentos já feitos continuam guardados.`,
+      [
+        { text: "Cancelar", style: "cancel" },
+        {
+          text: "Arquivar",
+          style: "destructive",
+          onPress: () => {
+            setArchiveError(null);
+            archiveAccount.mutate(account.id, {
+              onSuccess: handleGoBack,
+              onError: (err) =>
+                setArchiveError(
+                  mapErrorCodeToMessage((err as GraphQLApiError)?.code),
+                ),
+            });
+          },
+        },
+      ],
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [account, archiveAccount]);
 
   if (isLoading) {
     return (
@@ -58,8 +89,6 @@ export default function AccountDetailScreen() {
       />
     );
   }
-
-  const account = findAccountById(accounts, id);
 
   if (!account) {
     // Estado not-found (specs/mobile/routes/stack/account-detail.md §"Estados"):
@@ -99,7 +128,7 @@ export default function AccountDetailScreen() {
         <Card padding="lg">
           <DetailRow
             label="Tipo"
-            value={ACCOUNT_TYPE_LABEL[account.type] ?? account.type}
+            value={ACCOUNT_TYPE_LABELS[account.type] ?? account.type}
           />
           <DetailRow label="Moeda" value={account.currency} />
           <DetailRow
@@ -122,6 +151,42 @@ export default function AccountDetailScreen() {
           fullWidth
         />
       </View>
+
+      {account.isManual ? (
+        <>
+          <View style={{ marginTop: space[3] }}>
+            <Button
+              label="Importar extrato (CSV)"
+              onPress={() =>
+                router.push(
+                  `/(app)/accounts/import?accountId=${account.id}` as never,
+                )
+              }
+              variant="secondary"
+              fullWidth
+            />
+          </View>
+          <View style={{ marginTop: space[3] }}>
+            <Button
+              label="Arquivar conta"
+              onPress={handleArchive}
+              loading={archiveAccount.isPending}
+              variant="destructive"
+              fullWidth
+            />
+            {archiveError ? (
+              <Text
+                style={[
+                  typeScale.caption,
+                  { color: tokens.state.error.fg, marginTop: space[2] },
+                ]}
+              >
+                {archiveError}
+              </Text>
+            ) : null}
+          </View>
+        </>
+      ) : null}
     </ScrollView>
   );
 }

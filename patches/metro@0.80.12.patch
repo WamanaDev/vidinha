@@ -1,0 +1,50 @@
+diff --git a/src/HmrServer.js b/src/HmrServer.js
+index c1a1a369b481d1121ad92f55b4b5bfd6c8c88c33..079b652e08d29420d87ac26e3d1edb63af728d7b 100644
+--- a/src/HmrServer.js
++++ b/src/HmrServer.js
+@@ -46,18 +46,33 @@ class HmrServer {
+       transformOptions.platform,
+       resolverOptions
+     );
+-    const resolvedEntryFilePath = resolutionFn(
+-      (this._config.server.unstable_serverRoot ?? this._config.projectRoot) +
+-        "/.",
+-      {
+-        name: entryFile,
+-        data: {
+-          key: entryFile,
+-          asyncType: null,
+-          locs: [],
+-        },
+-      }
+-    ).filePath;
++    let resolvedEntryFilePath;
++    try {
++      resolvedEntryFilePath = resolutionFn(
++        (this._config.server.unstable_serverRoot ?? this._config.projectRoot) +
++          "/.",
++        {
++          name: entryFile,
++          data: {
++            key: entryFile,
++            asyncType: null,
++            locs: [],
++          },
++        }
++      ).filePath;
++    } catch (resolveError) {
++      // Workaround: em monorepos pnpm no Windows, o entryFile enviado pelo
++      // cliente às vezes vem relativo à raiz do workspace em vez de
++      // projectRoot, e a resolução acima falha mesmo com o bundle inicial
++      // já carregado com sucesso. Em vez de derrubar o Metro inteiro,
++      // ignoramos silenciosamente este registro de HMR (o app perde o
++      // fast-refresh automático, mas continua funcionando normalmente).
++      console.warn(
++        "[HmrServer] Ignorando falha ao registrar entry point para HMR:",
++        resolveError.message
++      );
++      return;
++    }
+     const graphId = getGraphId(resolvedEntryFilePath, transformOptions, {
+       resolverOptions,
+       shallow: graphOptions.shallow,

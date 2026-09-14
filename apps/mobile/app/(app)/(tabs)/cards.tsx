@@ -4,6 +4,7 @@ import { useRouter } from "expo-router";
 import { Skeleton } from "@components/Skeleton";
 import { ErrorState } from "@components/ErrorState";
 import { EmptyState } from "@components/EmptyState";
+import { Button } from "@components/Button";
 import { useActiveFamily } from "@lib/activeFamilyContext";
 import { useCards } from "@features/cards/hooks/useCards";
 import { CardListItem } from "@features/cards/components/CardListItem";
@@ -37,6 +38,10 @@ export default function CardsScreen() {
 
   const keyExtractor = useCallback((item: Card) => item.id, []);
 
+  const handleAddManually = useCallback(() => {
+    router.push("/(app)/cards/new" as never);
+  }, [router]);
+
   if (isLoading) {
     return (
       <View
@@ -61,10 +66,14 @@ export default function CardsScreen() {
 
   if (cards.length === 0) {
     return (
-      <EmptyState
-        title="Nenhum cartão por aqui"
-        description="Assim que um cartão for conectado ou cadastrado, ele aparece aqui."
-      />
+      <View style={{ flex: 1 }}>
+        <EmptyState
+          title="Nenhum cartão por aqui"
+          description="Assim que um cartão for conectado ou cadastrado, ele aparece aqui."
+          actionLabel="Adicionar cartão manualmente"
+          onAction={handleAddManually}
+        />
+      </View>
     );
   }
 
@@ -74,6 +83,22 @@ export default function CardsScreen() {
       data={cards}
       keyExtractor={keyExtractor}
       renderItem={renderItem}
+      ListHeaderComponent={
+        <View
+          style={{
+            padding: space[4],
+            paddingBottom: 0,
+            alignItems: "flex-end",
+          }}
+        >
+          <Button
+            label="Adicionar cartão manual"
+            variant="ghost"
+            size="sm"
+            onPress={handleAddManually}
+          />
+        </View>
+      }
       // claude.md §16.1 — evita renderizar tudo simultaneamente.
       windowSize={7}
       maxToRenderPerBatch={10}

@@ -52,6 +52,11 @@ export default function SettingsMenuScreen() {
         leftElement={<ShieldCheck color={tokens.icon.default} size={22} />}
         onPress={() => router.push("/(app)/settings/security")}
       />
+      {/* "Minhas famílias" foi substituído pelo `AppHeader` fixo no topo das
+          tabs principais (toque no nome da família ativa abre o menu de
+          troca) — ver `src/components/AppHeader/index.tsx`. A rota
+          `/(app)/settings/families` continua existindo, sem uso direto por
+          este menu. */}
       <ListItem
         title="Notificações"
         subtitle="O que a gente avisa vocês"

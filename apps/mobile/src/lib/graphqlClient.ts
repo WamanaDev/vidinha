@@ -29,11 +29,25 @@ export class GraphQLApiError extends Error {
   }
 }
 
+// AbortSignal.timeout não existe no runtime Hermes do React Native (API
+// relativamente nova, sem polyfill no Expo SDK 51) — monta o timeout na mão
+// com AbortController em vez de depender dela.
+function fetchWithTimeout(
+  input: RequestInfo | URL,
+  init: RequestInit | undefined,
+  timeoutMs: number,
+): Promise<Response> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  return fetch(input, { ...init, signal: controller.signal }).finally(() =>
+    clearTimeout(timeoutId),
+  );
+}
+
 const rawClient = new GraphQLClient(env.GRAPHQL_ENDPOINT, {
   // Timeout curto: a API roda em Vercel Serverless (cold start possível),
   // mas o plano Hobby já limita a função a 10s — não vale a pena esperar mais que isso no client.
-  fetch: (input, init) =>
-    fetch(input, { ...init, signal: AbortSignal.timeout(15_000) }),
+  fetch: (input, init) => fetchWithTimeout(input, init, 15_000),
 });
 
 async function getAccessToken(): Promise<string | null> {

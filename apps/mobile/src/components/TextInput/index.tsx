@@ -15,6 +15,16 @@ export interface TextInputProps {
   keyboardType?: "default" | "email-address" | "numeric" | "phone-pad";
   autoCapitalize?: "none" | "sentences" | "words";
   rightAdornment?: React.ReactNode;
+  // SUPOSIÇÃO: não fazem parte da interface original em
+  // specs/mobile/design-system/text-input.md — adicionados como pass-through
+  // opcionais (não quebram nenhum uso existente) para o formulário de
+  // credenciais bancárias do Open Finance (apps/mobile/app/(app)/open-finance/connect-form.tsx),
+  // que precisa desabilitar autofill/gerenciador de senha do teclado nesses
+  // campos por requisito de segurança (MASVS-STORAGE).
+  autoComplete?: React.ComponentProps<typeof RNTextInput>["autoComplete"];
+  importantForAutofill?: React.ComponentProps<
+    typeof RNTextInput
+  >["importantForAutofill"];
 }
 
 export function TextInput({
@@ -27,6 +37,8 @@ export function TextInput({
   keyboardType = "default",
   autoCapitalize = "sentences",
   rightAdornment,
+  autoComplete,
+  importantForAutofill,
 }: TextInputProps) {
   const tokens = useTokens();
   const [focused, setFocused] = useState(false);
@@ -83,6 +95,8 @@ export function TextInput({
           secureTextEntry={secureTextEntry}
           keyboardType={keyboardType}
           autoCapitalize={autoCapitalize}
+          autoComplete={autoComplete}
+          importantForAutofill={importantForAutofill}
           onFocus={() => setFocused(true)}
           onBlur={() => setFocused(false)}
           style={[

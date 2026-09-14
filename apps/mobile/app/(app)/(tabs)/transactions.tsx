@@ -4,6 +4,7 @@ import { useInfiniteQuery } from "@tanstack/react-query";
 import { useRouter } from "expo-router";
 import { ListItem } from "@components/ListItem";
 import { Amount } from "@components/Amount";
+import { Button } from "@components/Button";
 import { Skeleton } from "@components/Skeleton";
 import { EmptyState } from "@components/EmptyState";
 import { ErrorState } from "@components/ErrorState";
@@ -90,6 +91,10 @@ export default function TransactionsScreen() {
 
   const keyExtractor = useCallback((item: TransactionEdge) => item.node.id, []);
 
+  const handleAddManually = useCallback(() => {
+    router.push("/(app)/transaction/new" as never);
+  }, [router]);
+
   if (isLoading) {
     return (
       <View style={styles.container}>
@@ -111,10 +116,14 @@ export default function TransactionsScreen() {
 
   if (edges.length === 0) {
     return (
-      <EmptyState
-        title="Nenhum lançamento por aqui"
-        description="Conecte uma conta ou ajuste os filtros para ver seus lançamentos."
-      />
+      <View style={{ flex: 1 }}>
+        <EmptyState
+          title="Nenhum lançamento por aqui"
+          description="Conecte uma conta, ajuste os filtros ou lance algo manualmente."
+          actionLabel="Novo lançamento manual"
+          onAction={handleAddManually}
+        />
+      </View>
     );
   }
 
@@ -132,6 +141,22 @@ export default function TransactionsScreen() {
           onRefresh={handleRefresh}
           tintColor={theme.colors.primary}
         />
+      }
+      ListHeaderComponent={
+        <View
+          style={{
+            padding: theme.spacing.md,
+            paddingBottom: 0,
+            alignItems: "flex-end",
+          }}
+        >
+          <Button
+            label="Novo lançamento manual"
+            variant="ghost"
+            size="sm"
+            onPress={handleAddManually}
+          />
+        </View>
       }
       ListFooterComponent={
         isFetchingNextPage ? (
