@@ -322,6 +322,22 @@ export interface User {
   createdAt: string;
 }
 
+// specs/security/file-uploads.md — fluxo de upload de avatar via Supabase
+// Storage. `avatarPath` (não `avatarUrl`) é o campo real de
+// `CompleteProfileInput` no SDL (`apps/api/src/auth/dto/complete-profile.input.ts`):
+// é o `path` retornado por `createAvatarUploadUrl`, nunca uma URL arbitrária.
+export interface CompleteProfileInput {
+  displayName: string;
+  avatarPath?: string | null;
+}
+
+// Retorno de `createAvatarUploadUrl(mimeType: String!)`
+// (`apps/api/src/auth/entities/avatar-upload-url-payload.entity.ts`).
+export interface AvatarUploadUrlPayload {
+  uploadUrl: string;
+  path: string;
+}
+
 export interface DataExportPayload {
   downloadUrl: string;
   expiresAt: string;

@@ -17,6 +17,9 @@ import { BottomSheet } from "@components/BottomSheet";
 import { Avatar } from "@components/Avatar";
 import { useActiveFamily } from "@lib/activeFamilyContext";
 import { useAuth } from "@lib/authContext";
+import { getInitials } from "@lib/avatarInitials";
+import { useCachedAvatarUri } from "@lib/useCachedAvatarUri";
+import { useMe } from "@features/settings/hooks/useMe";
 import { useTokens } from "@config/theme";
 import { type as typeScale } from "@config/theme/typography";
 import { space } from "@config/theme/spacing";
@@ -38,6 +41,15 @@ function AppHeaderBase(_props: AppHeaderProps) {
   const router = useRouter();
   const queryClient = useQueryClient();
   const { session } = useAuth();
+  // Mesma query já usada em `settings/profile`/`settings/security` (queryKey
+  // "me" compartilhada) — aqui só para exibir a foto real de perfil no
+  // atalho de "Meu perfil" deste menu, sem duplicar custo de rede quando a
+  // tela de perfil já populou o cache do TanStack Query.
+  const { data: meData } = useMe();
+  const cachedAvatarUri = useCachedAvatarUri(
+    session?.user?.id,
+    meData?.me.avatarUrl,
+  );
   const { familyId, families, setActiveFamilyId } = useActiveFamily();
   const [sheetVisible, setSheetVisible] = useState(false);
   // Sub-menu empilhado (2 telas em BottomSheets separados, mesma abordagem já
@@ -175,7 +187,13 @@ function AppHeaderBase(_props: AppHeaderProps) {
           <ListItem
             title={displayName || "Meu perfil"}
             subtitle="Ver perfil"
-            leftElement={<Avatar name={displayName || "?"} size={36} />}
+            leftElement={
+              <Avatar
+                uri={cachedAvatarUri}
+                fallbackInitials={getInitials(displayName || "?")}
+                size="sm"
+              />
+            }
             onPress={handleGoToProfile}
           />
           <ListItem
