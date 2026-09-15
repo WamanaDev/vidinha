@@ -189,6 +189,11 @@ export interface Card {
   limit?: number | null;
   currentInvoice?: number | null;
   dueDate?: string | null;
+  // Presente quando o cartão veio de uma sincronização Open Finance; ausente
+  // (`null`) para cartão manual — mesma convenção de `Account.connection`
+  // (PR #24, paridade Card×Account). `id`/`institutionName` bastam para o
+  // client derivar "é manual?" e mostrar o nome da instituição.
+  connection?: Pick<OpenFinanceConnection, "id" | "institutionName"> | null;
   sharedWithFamily: boolean;
   owner: Pick<User, "id">;
 }

@@ -187,12 +187,14 @@ export class CardsService {
   }
 
   /**
-   * Soft-delete (`archivedAt`) de um cartão manual. Só o dono pode executar,
-   * e somente se `isManual === true`.
+   * Soft-delete (`archivedAt`) de um cartão — manual OU sincronizado via
+   * Open Finance. Só o dono pode executar. Mesma relaxação de
+   * `AccountsService#archive`: arquivar (diferente de editar) é permitido
+   * para qualquer cartão, para o usuário poder "excluir"/esconder um
+   * cartão específico sem precisar desconectar a instituição inteira.
    */
   async archive(userId: string, id: string): Promise<boolean> {
     const card = await this.findOwnedCardOrThrow(id, userId);
-    this.assertManual(card);
 
     const familyId = await this.resolveOwnerFamilyId(userId);
 

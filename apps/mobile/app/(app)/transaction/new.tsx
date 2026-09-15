@@ -39,11 +39,10 @@ export default function NewTransactionScreen() {
   const { accounts } = useAccounts(familyId);
   const { data: cardsData } = useCards(familyId);
   // Regra do backend: um lançamento manual só pode ir em conta/cartão manual
-  // — contas sincronizadas via Open Finance ficam de fora deste seletor.
-  // (Ver SUPOSIÇÃO em `CardPickerSheet.tsx`: o SDL de `Card` não expõe campo
-  // equivalente a `isManual`/`connection`, então cartões não são filtrados.)
+  // — contas/cartões sincronizados via Open Finance ficam de fora deste
+  // seletor (Card.connection, PR #24, dá paridade com Account.connection).
   const manualAccounts = accounts.filter((a) => a.isManual);
-  const allCards = cardsData?.cards ?? [];
+  const manualCards = (cardsData?.cards ?? []).filter((c) => !c.connection);
 
   const [description, setDescription] = useState("");
   const [amountText, setAmountText] = useState("");
@@ -251,7 +250,7 @@ export default function NewTransactionScreen() {
       <CardPickerSheet
         isVisible={isCardPickerVisible}
         onClose={() => setCardPickerVisible(false)}
-        cards={allCards}
+        cards={manualCards}
         selectedCardId={
           destination?.kind === "card" ? destination.card.id : undefined
         }

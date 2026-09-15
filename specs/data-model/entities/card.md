@@ -82,7 +82,8 @@ enum CardType {
 - `lastFourDigits` nunca deve conter o PAN completo do cartão — requisito direto de escopo de PCI-DSS (`claude.md §23`).
 - `billingAccountId` é opcional (suposição A5, seção 7 de [../00-overview.md](../00-overview.md)): "nem todo cartão (especialmente cartões de crédito 'avulsos' retornados pelo Pluggy) tem uma conta de débito automático identificável no MVP".
 - O compartilhamento de um cartão com uma família é independente do compartilhamento da conta de fatura associada — são unidades de compartilhamento distintas (ver `00-DECISIONS §1`).
-- Cartão manual (`isManual: true`) é editável/arquivável apenas pelo próprio dono, via `createCard`/`updateCard`/`archiveCard` (`cards.module.md`). Cartão sincronizado via Open Finance (`isManual: false`) é somente leitura, exceto compartilhamento (`updateCardSharing`) — mesma regra de `Account` (`00-DECISIONS.md §12`).
+- Cartão manual (`isManual: true`) é editável pelo próprio dono via `updateCard` (`cards.module.md`). Cartão sincronizado via Open Finance (`isManual: false`) é somente leitura para edição de dados, exceto compartilhamento (`updateCardSharing`) — mesma regra de `Account` (`00-DECISIONS.md §12`).
+- **`archiveCard`, ao contrário de `updateCard`, funciona em qualquer cartão do dono (manual OU sincronizado)** — mesma relaxação de `Account.archiveAccount`.
 
 ## 5. Justificativa de Modelagem
 

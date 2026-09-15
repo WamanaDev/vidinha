@@ -19,6 +19,10 @@ const CARDS_QUERY = /* GraphQL */ `
       limit
       currentInvoice
       dueDate
+      connection {
+        id
+        institutionName
+      }
       sharedWithFamily
       owner {
         id
@@ -53,6 +57,10 @@ const CREATE_CARD_MUTATION = /* GraphQL */ `
       limit
       currentInvoice
       dueDate
+      connection {
+        id
+        institutionName
+      }
       sharedWithFamily
       owner {
         id
@@ -83,6 +91,10 @@ const UPDATE_CARD_MUTATION = /* GraphQL */ `
       limit
       currentInvoice
       dueDate
+      connection {
+        id
+        institutionName
+      }
       sharedWithFamily
       owner {
         id

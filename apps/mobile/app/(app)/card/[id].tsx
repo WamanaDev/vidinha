@@ -39,18 +39,17 @@ export default function CardDetailScreen() {
     if (!card) return;
     // Ação destrutiva — sempre com confirmação (claude.md §"nunca destrutivo
     // sem confirmação", mesmo padrão de `open-finance/connections.tsx`).
-    // SUPOSIÇÃO: o SDL real não expõe se um cartão é manual ou veio de uma
-    // conexão Open Finance (`Card` não tem `connection`/`isManual` no schema
-    // GraphQL, só no Prisma) — o botão fica disponível para qualquer cartão;
-    // se o backend rejeitar arquivar um cartão sincronizado, o erro do
-    // servidor é mostrado normalmente.
+    // Arquivar (excluir da lista) é permitido para qualquer cartão, manual
+    // ou sincronizado via Open Finance — o usuário pode querer esconder um
+    // cartão específico sem desconectar a instituição inteira (ver
+    // 00-DECISIONS.md §12).
     Alert.alert(
-      "Arquivar cartão",
-      `${card.name} vai deixar de aparecer nos seus cartões. Os lançamentos já feitos continuam guardados.`,
+      "Excluir cartão",
+      `${card.name} vai deixar de aparecer nos seus cartões. Os lançamentos já feitos continuam guardados${card.connection ? ", e a instituição continua conectada normalmente (os outros cartões/contas dela não são afetados)" : ""}.`,
       [
         { text: "Cancelar", style: "cancel" },
         {
-          text: "Arquivar",
+          text: "Excluir",
           style: "destructive",
           onPress: () => {
             setArchiveError(null);
@@ -171,7 +170,7 @@ export default function CardDetailScreen() {
 
       <View style={{ marginTop: space[3] }}>
         <Button
-          label="Arquivar cartão"
+          label="Excluir cartão"
           onPress={handleArchive}
           loading={archiveCard.isPending}
           variant="destructive"

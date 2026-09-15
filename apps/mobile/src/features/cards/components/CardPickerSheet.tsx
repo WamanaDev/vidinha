@@ -17,16 +17,9 @@ export interface CardPickerSheetProps {
 
 /**
  * Seletor de cartão de destino para lançamentos manuais
- * (apps/mobile/app/(app)/transaction/new.tsx).
- *
- * SUPOSIÇÃO: a regra do backend é que um lançamento manual só pode ir em
- * recurso manual, mas o SDL real de `Card` (packages/graphql-schema/schema.graphql)
- * não expõe nenhum campo para distinguir cartão manual de cartão sincronizado
- * via Open Finance (`Card` não tem `connection`/`isManual`, diferente de
- * `Account`, que tem `connection`). Por isso este seletor lista TODOS os
- * cartões da família — se o usuário escolher um cartão sincronizado, o erro
- * de validação do backend (`createTransaction`) é mostrado normalmente no
- * formulário. Reportar essa lacuna do schema para o time de backend.
+ * (apps/mobile/app/(app)/transaction/new.tsx). O caller já filtra para
+ * cartões manuais (`!card.connection`, ver `Card.connection` — PR #24) antes
+ * de passar a lista aqui; este componente não faz nenhuma filtragem própria.
  */
 export function CardPickerSheet({
   isVisible,
