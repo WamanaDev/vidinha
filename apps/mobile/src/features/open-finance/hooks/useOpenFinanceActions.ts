@@ -20,6 +20,12 @@ export function useSyncOpenFinanceConnection(familyId: string) {
       queryClient.invalidateQueries({
         queryKey: ["openFinanceConnections", familyId],
       });
+      // Um sync bem-sucedido pode ter criado/atualizado contas e cartões
+      // (ver OpenFinanceService#syncAccountsAndTransactions) — sem isso, a
+      // tela de Contas/Cartões só refletia o resultado depois de sair e
+      // voltar (bug relatado em teste em dispositivo real).
+      queryClient.invalidateQueries({ queryKey: ["accounts"] });
+      queryClient.invalidateQueries({ queryKey: ["cards"] });
     },
   });
 }
