@@ -73,7 +73,7 @@ type Mutation {
   updateCardSharing(input: UpdateCardSharingInput!): Card!
   createCard(input: CreateCardInput!): Card!
   updateCard(input: UpdateCardInput!): Card!
-  archiveCard(id: ID!): Boolean! # soft-delete (archivedAt), só isManual + dono
+  archiveCard(id: ID!): Boolean! # soft-delete (archivedAt), manual ou sincronizado, só dono
 }
 ```
 
@@ -86,7 +86,7 @@ type Mutation {
 - Autorização de leitura (`cards(familyId)`): o dono sempre vê seus próprios cartões; os demais membros da família só veem cartões com `sharedWithFamily: true`.
 - Cartões originam-se de conexões Open Finance (ver [`../open-finance/open-finance.module.md`](../open-finance/open-finance.module.md)) ou são cadastrados manualmente (`isManual: true`, `connectionId: null`).
 - Alteração de `sharedWithFamily` é evento auditável (`00-DECISIONS.md §9`) — ver [`../audit-log/audit-log.module.md`](../audit-log/audit-log.module.md).
-- **CRUD manual** (`createCard`/`updateCard`/`archiveCard`): espelha exatamente o CRUD manual de `Account` (ver `accounts.module.md`). `createCard` sempre cria com `isManual: true`, `connectionId: null`, `currentInvoice` nunca fica `null` (default 0) para que os incrementos de `TransactionsService` funcionem sem tratar `null` como caso especial. `updateCard`/`archiveCard` exigem `isManual: true` e que o chamador seja o dono. SUPOSIÇÃO: para cartões manuais, `currentInvoice` é tratado como "valor devido" (fatura em aberto) para qualquer `CardType` (CREDIT/DEBIT/PREPAID), já que o schema não tem um campo de saldo específico por tipo — uma transação `DEBIT` aumenta `currentInvoice`, uma `CREDIT` diminui. Eventos `CARD_CREATED`/`CARD_UPDATED`/`CARD_ARCHIVED` são auditados.
+- **CRUD manual** (`createCard`/`updateCard`/`archiveCard`): espelha exatamente o CRUD manual de `Account` (ver `accounts.module.md`), incluindo a mesma relaxação de `archiveCard`: `updateCard` exige `isManual: true`, mas `archiveCard` é permitido para qualquer cartão (manual OU sincronizado) — o usuário pode "excluir"/esconder um cartão específico sem desconectar a instituição inteira. Ambas exigem que o chamador seja o dono. `createCard` sempre cria com `isManual: true`, `connectionId: null`, `currentInvoice` nunca fica `null` (default 0) para que os incrementos de `TransactionsService` funcionem sem tratar `null` como caso especial. SUPOSIÇÃO: para cartões manuais, `currentInvoice` é tratado como "valor devido" (fatura em aberto) para qualquer `CardType` (CREDIT/DEBIT/PREPAID), já que o schema não tem um campo de saldo específico por tipo — uma transação `DEBIT` aumenta `currentInvoice`, uma `CREDIT` diminui. Eventos `CARD_CREATED`/`CARD_UPDATED`/`CARD_ARCHIVED` são auditados.
 
 ## 3. Estrutura de arquivos esperada (seguindo o padrão `family`)
 

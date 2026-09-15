@@ -93,50 +93,20 @@ export default function AccountsScreen() {
     );
   }
 
-  if (accounts.length === 0) {
-    const pendingConnections = connectionsData?.openFinanceConnections ?? [];
+  // Conexões que ainda não trouxeram NENHUMA conta visível (pendente, erro,
+  // ou desconectada) — mostradas sempre, mesmo quando já existem outras
+  // contas (manuais ou de outras instituições). Antes só apareciam quando a
+  // lista de contas estava 100% vazia, escondendo tentativas de conexão
+  // com erro assim que o usuário já tivesse qualquer outra conta (bug
+  // relatado em teste em dispositivo real).
+  const connectedIds = new Set(
+    accounts.map((a) => a.connectionId).filter(Boolean),
+  );
+  const pendingConnections = (
+    connectionsData?.openFinanceConnections ?? []
+  ).filter((connection) => !connectedIds.has(connection.id));
 
-    // Existe uma conexão (Open Finance já autorizado), só ainda não trouxe
-    // nenhuma conta — mostrar "nenhuma conta conectada" aqui seria enganoso
-    // (parece que nada foi feito, quando na verdade a sincronização está em
-    // andamento ou falhou). Mostra o estado real de cada conexão pendente.
-    if (pendingConnections.length > 0) {
-      return (
-        <View style={[styles.container, { backgroundColor: tokens.bg.app }]}>
-          <Text
-            style={[
-              typeScale.body,
-              {
-                color: tokens.text.secondary,
-                padding: space[4],
-                paddingBottom: 0,
-              },
-            ]}
-          >
-            Suas contas ainda não sincronizaram.
-          </Text>
-          {pendingConnections.map((connection) => (
-            <ListItem
-              key={connection.id}
-              title={connection.institutionName}
-              subtitle={
-                CONNECTION_STATUS_LABEL[connection.status] ?? connection.status
-              }
-              onPress={handleManageConnections}
-            />
-          ))}
-          <View style={{ padding: space[4] }}>
-            <Button
-              label="Ver conexões Open Finance"
-              variant="secondary"
-              onPress={handleManageConnections}
-              fullWidth
-            />
-          </View>
-        </View>
-      );
-    }
-
+  if (accounts.length === 0 && pendingConnections.length === 0) {
     return (
       <View style={{ flex: 1 }}>
         <EmptyState
@@ -157,35 +127,82 @@ export default function AccountsScreen() {
     );
   }
 
+  const listHeader = (
+    <View style={{ padding: space[4], paddingBottom: 0 }}>
+      <View
+        style={{
+          flexDirection: "row",
+          flexWrap: "wrap",
+          justifyContent: "space-between",
+          gap: space[2],
+        }}
+      >
+        <Button
+          label="Conectar Open Finance"
+          variant="ghost"
+          size="sm"
+          onPress={handleConnect}
+        />
+        <Button
+          label="Adicionar conta manual"
+          variant="ghost"
+          size="sm"
+          onPress={handleAddManually}
+        />
+      </View>
+      {pendingConnections.length > 0 ? (
+        <Button
+          label="Gerenciar conexões Open Finance"
+          variant="ghost"
+          size="sm"
+          onPress={handleManageConnections}
+        />
+      ) : null}
+      {pendingConnections.length > 0 ? (
+        <View style={{ marginTop: space[3] }}>
+          <Text style={[typeScale.label, { color: tokens.text.secondary }]}>
+            Sincronizando ou com pendência
+          </Text>
+          {pendingConnections.map((connection) => (
+            <ListItem
+              key={connection.id}
+              title={connection.institutionName}
+              subtitle={
+                CONNECTION_STATUS_LABEL[connection.status] ?? connection.status
+              }
+              onPress={handleManageConnections}
+            />
+          ))}
+        </View>
+      ) : null}
+      {accounts.length > 0 && pendingConnections.length > 0 ? (
+        <Text
+          style={[
+            typeScale.label,
+            { color: tokens.text.secondary, marginTop: space[3] },
+          ]}
+        >
+          Suas contas
+        </Text>
+      ) : null}
+    </View>
+  );
+
+  if (accounts.length === 0) {
+    return (
+      <View style={[styles.container, { backgroundColor: tokens.bg.app }]}>
+        {listHeader}
+      </View>
+    );
+  }
+
   return (
     <FlatList
       style={[styles.container, { backgroundColor: tokens.bg.app }]}
       data={accounts}
       keyExtractor={keyExtractor}
       renderItem={renderItem}
-      ListHeaderComponent={
-        <View
-          style={{
-            padding: space[4],
-            paddingBottom: 0,
-            flexDirection: "row",
-            justifyContent: "space-between",
-          }}
-        >
-          <Button
-            label="Gerenciar conexões Open Finance"
-            variant="ghost"
-            size="sm"
-            onPress={handleManageConnections}
-          />
-          <Button
-            label="Adicionar conta manual"
-            variant="ghost"
-            size="sm"
-            onPress={handleAddManually}
-          />
-        </View>
-      }
+      ListHeaderComponent={listHeader}
       // claude.md §16.1 — evita renderizar tudo simultaneamente.
       windowSize={7}
       maxToRenderPerBatch={10}

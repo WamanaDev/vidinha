@@ -386,11 +386,30 @@ describe("AccountsService", () => {
       expect(auditLog.record).toHaveBeenCalled();
     });
 
-    it("rejeita arquivar uma conta sincronizada via Open Finance", async () => {
+    it("permite arquivar uma conta sincronizada via Open Finance (excluir uma conta específica sem desconectar a instituição)", async () => {
       prisma.account.findUnique.mockResolvedValue(syncedAccount);
+      prisma.familyMember.findFirst.mockResolvedValue({ familyId });
+      prisma.account.update.mockResolvedValue({
+        ...syncedAccount,
+        archivedAt: new Date(),
+      });
+
+      const result = await service.archive(ownerId, syncedAccount.id);
+
+      expect(result).toBe(true);
+      expect(prisma.account.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: syncedAccount.id },
+          data: expect.objectContaining({ archivedAt: expect.any(Date) }),
+        }),
+      );
+    });
+
+    it("rejeita arquivar conta de outro usuário", async () => {
+      prisma.account.findUnique.mockResolvedValue(privateAccount);
 
       await expect(
-        service.archive(ownerId, syncedAccount.id),
+        service.archive(outsiderId, privateAccount.id),
       ).rejects.toBeInstanceOf(ForbiddenAppException);
     });
   });

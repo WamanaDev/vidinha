@@ -186,14 +186,20 @@ export class AccountsService {
   }
 
   /**
-   * Soft-delete (`archivedAt`) de uma conta manual. Só o dono pode executar,
-   * e somente se `isManual === true`. Contas arquivadas param de aparecer em
-   * `accounts(familyId)` (já filtrado por `archivedAt: null`), preservando o
-   * histórico de transações.
+   * Soft-delete (`archivedAt`) de uma conta — manual OU sincronizada via
+   * Open Finance. Só o dono pode executar. Ao contrário de `updateManual`
+   * (só permite editar dado bruto de conta manual), arquivar é permitido
+   * para qualquer conta: o usuário pode querer "excluir"/esconder uma conta
+   * específica trazida por uma instituição sem precisar desconectar a
+   * instituição inteira (que poderia trazer outras contas). Contas
+   * arquivadas param de aparecer em `accounts(familyId)` (já filtrado por
+   * `archivedAt: null`), preservando o histórico de transações; um resync
+   * futuro da mesma instituição não reverte o arquivamento — o `upsert` de
+   * `OpenFinanceService#upsertAccountFromPluggyAccount` nunca escreve
+   * `archivedAt`.
    */
   async archive(userId: string, id: string): Promise<boolean> {
     const account = await this.findOwnedAccountOrThrow(id, userId);
-    this.assertManual(account);
 
     const familyId = await this.resolveOwnerFamilyId(userId);
 

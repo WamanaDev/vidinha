@@ -45,12 +45,12 @@ export default function AccountDetailScreen() {
     // Ação destrutiva — sempre com confirmação (claude.md §"nunca destrutivo
     // sem confirmação", mesmo padrão de `open-finance/connections.tsx`).
     Alert.alert(
-      "Arquivar conta",
-      `${account.name} vai deixar de aparecer nas suas contas. Os lançamentos já feitos continuam guardados.`,
+      "Excluir conta",
+      `${account.name} vai deixar de aparecer nas suas contas. Os lançamentos já feitos continuam guardados${account.isManual ? "" : ", e a instituição continua conectada normalmente (as outras contas dela não são afetadas)"}.`,
       [
         { text: "Cancelar", style: "cancel" },
         {
-          text: "Arquivar",
+          text: "Excluir",
           style: "destructive",
           onPress: () => {
             setArchiveError(null);
@@ -153,40 +153,43 @@ export default function AccountDetailScreen() {
       </View>
 
       {account.isManual ? (
-        <>
-          <View style={{ marginTop: space[3] }}>
-            <Button
-              label="Importar extrato (CSV)"
-              onPress={() =>
-                router.push(
-                  `/(app)/accounts/import?accountId=${account.id}` as never,
-                )
-              }
-              variant="secondary"
-              fullWidth
-            />
-          </View>
-          <View style={{ marginTop: space[3] }}>
-            <Button
-              label="Arquivar conta"
-              onPress={handleArchive}
-              loading={archiveAccount.isPending}
-              variant="destructive"
-              fullWidth
-            />
-            {archiveError ? (
-              <Text
-                style={[
-                  typeScale.caption,
-                  { color: tokens.state.error.fg, marginTop: space[2] },
-                ]}
-              >
-                {archiveError}
-              </Text>
-            ) : null}
-          </View>
-        </>
+        <View style={{ marginTop: space[3] }}>
+          <Button
+            label="Importar extrato (CSV)"
+            onPress={() =>
+              router.push(
+                `/(app)/accounts/import?accountId=${account.id}` as never,
+              )
+            }
+            variant="secondary"
+            fullWidth
+          />
+        </View>
       ) : null}
+
+      {/* Arquivar (excluir da lista) é permitido para qualquer conta, manual
+          ou sincronizada via Open Finance — o usuário pode querer esconder
+          uma conta específica de uma instituição sem desconectar a
+          instituição inteira (ver 00-DECISIONS.md §12). */}
+      <View style={{ marginTop: space[3] }}>
+        <Button
+          label="Excluir conta"
+          onPress={handleArchive}
+          loading={archiveAccount.isPending}
+          variant="destructive"
+          fullWidth
+        />
+        {archiveError ? (
+          <Text
+            style={[
+              typeScale.caption,
+              { color: tokens.state.error.fg, marginTop: space[2] },
+            ]}
+          >
+            {archiveError}
+          </Text>
+        ) : null}
+      </View>
     </ScrollView>
   );
 }

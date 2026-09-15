@@ -376,11 +376,30 @@ describe("CardsService", () => {
       expect(auditLog.record).toHaveBeenCalled();
     });
 
-    it("rejeita arquivar um cartão sincronizado via Open Finance", async () => {
+    it("permite arquivar um cartão sincronizado via Open Finance (excluir um cartão específico sem desconectar a instituição)", async () => {
       prisma.card.findUnique.mockResolvedValue(syncedCard);
+      prisma.familyMember.findFirst.mockResolvedValue({ familyId });
+      prisma.card.update.mockResolvedValue({
+        ...syncedCard,
+        archivedAt: new Date(),
+      });
+
+      const result = await service.archive(ownerId, syncedCard.id);
+
+      expect(result).toBe(true);
+      expect(prisma.card.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: syncedCard.id },
+          data: expect.objectContaining({ archivedAt: expect.any(Date) }),
+        }),
+      );
+    });
+
+    it("rejeita arquivar cartão de outro usuário", async () => {
+      prisma.card.findUnique.mockResolvedValue(privateCard);
 
       await expect(
-        service.archive(ownerId, syncedCard.id),
+        service.archive(outsiderId, privateCard.id),
       ).rejects.toBeInstanceOf(ForbiddenAppException);
     });
   });
