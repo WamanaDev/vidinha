@@ -1,5 +1,6 @@
 import { View } from "react-native";
 import { Tabs } from "expo-router";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import {
   Home,
   Landmark,
@@ -23,9 +24,16 @@ import { type as typeScale } from "@config/theme/typography";
 // preencher o espaço restante do `<View>` pai.
 export default function TabsLayout() {
   const tokens = useTokens();
+  const insets = useSafeAreaInsets();
 
   return (
-    <View style={{ flex: 1, backgroundColor: tokens.bg.app }}>
+    <View
+      style={{
+        flex: 1,
+        backgroundColor: tokens.bg.app,
+        paddingTop: insets.top,
+      }}
+    >
       <AppHeader />
       <View style={{ flex: 1 }}>
         <Tabs
