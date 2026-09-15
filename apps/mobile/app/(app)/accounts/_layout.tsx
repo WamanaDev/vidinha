@@ -2,10 +2,10 @@ import { Stack } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useTokens } from "@config/theme";
 
-// Grupo autenticado, sem família ativa (specs/mobile/00-overview.md §1).
-// `SafeAreaView` (top) evita que o conteúdo (sem header nativo) renderize
-// sob a barra de status/notch.
-export default function OnboardingLayout() {
+// Sem header nativo (headerShown: false, mesmo comportamento herdado do
+// Stack raiz) — `SafeAreaView` (top) evita que o conteúdo renderize sob a
+// barra de status/notch, bug relatado em teste em dispositivo real.
+export default function AccountsLayout() {
   const tokens = useTokens();
   return (
     <SafeAreaView
